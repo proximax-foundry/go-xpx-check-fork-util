@@ -1,15 +1,16 @@
 {
-    "apiNodes": [ 
-      "https://arcturus.xpxsirius.io",
-      "https://aldebaran.xpxsirius.io",
-      "https://bigcalvin.xpxsirius.io",
-      "https://betelgeuse.xpxsirius.io",
-      "https://lyrasithara.xpxsirius.io",
-      "https://delphinus.xpxsirius.io"
-    ],
-    "sleepInterval": 60,
-    "alarmInterval": 1,
-    "pruneHeight": 360,
-    "botApiKey": "<TELEGRAM_BOT_API_KEY>",
-    "chatID": <TELEGRAM_CHAT_ID>
+  "notif": false,
+  "apiNodes": [ 
+    "https://arcturus.xpxsirius.io",
+    "https://aldebaran.xpxsirius.io",
+    "https://bigcalvin.xpxsirius.io",
+    "https://betelgeuse.xpxsirius.io",
+    "https://lyrasithara.xpxsirius.io",
+    "https://delphinus.xpxsirius.io"
+  ],
+  "sleepInterval": 60,
+  "alarmInterval": 1,
+  "pruneHeight": 360,
+  "botApiKey": "<TELEGRAM_BOT_API_KEY>",
+  "chatID": 11111
 }

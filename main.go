@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -13,6 +14,7 @@ import (
 )
 
 type Config struct {
+	Notif         bool     `json:"notif"`
 	ApiNodes      []string `json:"apiNodes"`
 	Sleep         int      `json:"sleep"`
 	BotApiKey     string   `json:"botApiKey"`
@@ -27,8 +29,10 @@ var conf *sdk.Config
 var alarmTime time.Time
 
 func main() {
+	configFile := flag.String("file", "config.json", "Configuration File")
+	flag.Parse()
 	var err error
-	config, err := readConfig("config.json")
+	config, err := readConfig(*configFile)
 	errHandling(err)
 
 	for {
@@ -43,14 +47,14 @@ func main() {
 
 			}
 		}
-		checkHash(clients)
+		checkHash(clients, configFile)
 		time.Sleep(time.Duration(config.Sleep) * time.Second)
 
 	}
 }
 
-func checkHash(clients []*sdk.Client) {
-	config, err := readConfig("config.json")
+func checkHash(clients []*sdk.Client, configFile *string) {
+	config, err := readConfig(*configFile)
 	errHandling(err)
 	alarmInterval := time.Duration(config.AlarmInterval) * time.Hour
 	Red := "\033[31m"
@@ -87,9 +91,9 @@ func checkHash(clients []*sdk.Client) {
 					forkInfo := fmt.Sprintf("%s: %s\n%s: %s\n", curNode.Host, curBlock.BlockHash, checkNode.Host, checkBlock.BlockHash)
 					fmt.Println(forkInfo)
 
-					if time.Since(alarmTime) > alarmInterval {
+					if time.Since(alarmTime) > alarmInterval && config.Notif {
 						msgString := "Fork Detected ! Block Height: " + checkingHeight.String()
-						sendAlert(msgString + forkInfo)
+						sendAlert(msgString+forkInfo, configFile)
 						alarmTime = time.Now()
 					}
 
@@ -120,8 +124,8 @@ func readConfig(fileName string) (Config, error) {
 	return config, err
 }
 
-func sendAlert(msgString string) {
-	config, _ := readConfig("config.json")
+func sendAlert(msgString string, configFile *string) {
+	config, _ := readConfig(*configFile)
 
 	bot, err := tgbotapi.NewBotAPI(config.BotApiKey)
 	if err != nil {
