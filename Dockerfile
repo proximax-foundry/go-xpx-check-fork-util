@@ -11,3 +11,4 @@ COPY --from=build /app/go-xpx-check-fork-util .
 COPY --from=build /app/config.json .
 CMD ["/app/go-xpx-check-fork-util"]
 
+
