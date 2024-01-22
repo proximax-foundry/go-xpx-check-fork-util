@@ -1,147 +1,215 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
+	"errors"
 	"flag"
-
 	"fmt"
 	"log"
+	"math"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	"github.com/proximax-storage/go-xpx-chain-sdk/sdk"
+	"github.com/proximax-storage/go-xpx-chain-sdk/tools/health"
+	"github.com/proximax-storage/go-xpx-chain-sdk/tools/health/packets"
+	crypto "github.com/proximax-storage/go-xpx-crypto"
+
+	"github.com/fatih/color"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+)
+
+var (
+	alarmTime time.Time
+	config    Config
 )
 
 type Config struct {
-	Notif         bool     `json:"notif"`
-	ApiNodes      []string `json:"apiNodes"`
-	Sleep         int      `json:"sleep"`
-	BotApiKey     string   `json:"botApiKey"`
-	ChatID        int64    `json:"chatID"`
-	AlarmInterval int      `json:"alarmInterval"`
-	PruneHeight   int      `json:"pruneHeight"`
+	Nodes []struct {
+		Endpoint    string `json:"endpoint"`
+		IdentityKey string `json:"IdentityKey"`
+	} `json:"nodes"`
+	HeightCheckInterval     uint64 `json:"heightCheckInterval"`
+	ConnectionRetryInterval uint64 `json:"connectionRetryInterval"`
+	AlarmInterval           uint64 `json:"alarmInterval"`
+	PruneHeight             uint64 `json:"pruneHeight"`
+	BotAPIKey               string `json:"botApiKey"`
+	ChatID                  int64  `json:"chatID"`
+	Notify                  bool   `json:"notify"`
 }
-
-var clients []*sdk.Client
-var conf *sdk.Config
-
-var alarmTime time.Time
 
 func main() {
-	configFile := flag.String("file", "config.json", "Configuration File")
+	fileName := flag.String("file", "config.json", "Name of file to load config from")
 	flag.Parse()
-	var err error
-	config, err := readConfig(*configFile)
-	errHandling(err)
+
+	if err := config.Load(*fileName); err != nil {
+		log.Fatal("Error:", err)
+	}
+
+	if err := config.Validate(); err != nil {
+		log.Fatal("Validation Error:", err)
+	}
+
+	nodeInfos, err := config.ParseNodes()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	client, err := crypto.NewRandomKeyPair()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	pool, err := health.NewNodeHealthCheckerPool(client, nodeInfos, packets.NoneConnectionSecurity, false, math.MaxInt)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	heightCheckInterval := time.Duration(config.HeightCheckInterval) * 15 * time.Second
+	alarmInterval := time.Duration(config.AlarmInterval) * time.Hour
+	connectionRetryInterval := time.Duration(config.ConnectionRetryInterval) * time.Minute
+	executionTime := time.Now()
+
+	red := color.New(color.FgRed).SprintfFunc()
 
 	for {
-		clients = nil
-		fmt.Println()
-		for _, apiNode := range config.ApiNodes {
-			conf, err = sdk.NewConfig(context.Background(), []string{apiNode})
-			if err != nil {
-				fmt.Println(apiNode + " is Offline")
-			} else {
-				clients = append(clients, sdk.NewClient(nil, conf))
+		maxHeight := pool.MaxHeight()
 
+		if err := pool.WaitHeightAll(maxHeight); err != nil {
+			log.Fatal(err)
+		}
+
+		checkingHeight := maxHeight - config.PruneHeight
+		log.Printf("Checking block hash at %d height", checkingHeight)
+
+		if hashes := pool.FindInconsistentHashesAtHeight(checkingHeight); hashes != nil {
+			log.Print(red("Fork Detected! Block Height: %d", checkingHeight))
+			for endpoint, hash := range hashes {
+				log.Print(red("%s: %s", endpoint, hash))
+			}
+
+			formattedAlert := ConstructFormattedAlert(checkingHeight, hashes)
+			if err := config.SendAlert(formattedAlert, alarmInterval); err != nil {
+				log.Print(err)
 			}
 		}
-		checkHash(clients, configFile)
-		time.Sleep(time.Duration(config.Sleep) * time.Second)
 
-	}
-}
-
-func checkHash(clients []*sdk.Client, configFile *string) {
-	config, err := readConfig(*configFile)
-	errHandling(err)
-	alarmInterval := time.Duration(config.AlarmInterval) * time.Hour
-	Red := "\033[31m"
-	Reset := "\033[0m"
-
-	pruneHeight := sdk.Height(config.PruneHeight)
-	for _, checkingNode := range clients {
-
-		height, err := checkingNode.Blockchain.GetBlockchainHeight(context.Background())
-		errHandling(err)
-		checkingHeight := height - pruneHeight
-
-		checkBlock, err := checkingNode.Blockchain.GetBlockByHeight(context.Background(), checkingHeight)
-		errHandling(err)
-
-		checkNode, err := checkingNode.Node.GetNodeInfo(context.Background())
-
-		errHandling(err)
-		fmt.Print("\nCHECKING NODE: ", checkNode.Host)
-		fmt.Println(" at height :", checkingHeight)
-
-		for _, currentNode := range clients {
-			curHeight, err := currentNode.Blockchain.GetBlockchainHeight(context.Background())
-			errHandling(err)
-			if (curHeight >= checkingHeight) && (checkingNode != currentNode) {
-				curBlock, err := currentNode.Blockchain.GetBlockByHeight(context.Background(), checkingHeight)
-				errHandling(err)
-				curNode, err := currentNode.Node.GetNodeInfo(context.Background())
-				errHandling(err)
-				fmt.Print("comparing to node: ", curNode.Host)
-				if curBlock.BlockHash.String() != checkBlock.BlockHash.String() {
-
-					fmt.Println(string(Red), "\n\nFork Detected ! Block Height: ", checkingHeight, string(Reset))
-					forkInfo := fmt.Sprintf("%s: %s\n%s: %s\n", curNode.Host, curBlock.BlockHash, checkNode.Host, checkBlock.BlockHash)
-					fmt.Println(forkInfo)
-
-					if time.Since(alarmTime) > alarmInterval && config.Notif {
-						msgString := "Fork Detected ! Block Height: " + checkingHeight.String()
-						sendAlert(msgString+forkInfo, configFile)
-						alarmTime = time.Now()
-					}
-
-				} else {
-					fmt.Println(" (Hash identical)")
-				}
-
-			}
+		if time.Since(executionTime) >= connectionRetryInterval {
+			pool = ReconnectAll(pool, nodeInfos, client)
+			executionTime = time.Now()
 		}
+
+		time.Sleep(heightCheckInterval)
 	}
 }
 
-func errHandling(err error) {
-	if err != nil {
-		panic(err)
+func ReconnectAll(pool *health.NodeHealthCheckerPool, nodeInfos []*health.NodeInfo, client *crypto.KeyPair) *health.NodeHealthCheckerPool {
+	log.Println("Resetting connection pool")
+
+	if err := pool.Close(); err != nil {
+		log.Fatal(err)
 	}
+
+	pool, err := health.NewNodeHealthCheckerPool(client, nodeInfos, packets.NoneConnectionSecurity, false, math.MaxInt)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return pool
 }
 
-func readConfig(fileName string) (Config, error) {
-	configFile, err := os.Open(fileName)
-	var config Config
+func (c *Config) Load(fileName string) error {
+	content, err := os.ReadFile(fileName)
 	if err != nil {
-		return config, err
+		return fmt.Errorf("error reading config file '%s': %v", fileName, err)
 	}
-	defer configFile.Close()
-	jsonParser := json.NewDecoder(configFile)
-	err = jsonParser.Decode(&config)
-	return config, err
+
+	err = json.Unmarshal(content, c)
+	if err != nil {
+		return fmt.Errorf("error un-marshalling config file '%s': %v", fileName, err)
+	}
+
+	return nil
 }
 
-func sendAlert(msgString string, configFile *string) {
-	config, _ := readConfig(*configFile)
+func (c *Config) Validate() error {
+	if len(c.Nodes) == 0 {
+		return errors.New("Nodes cannot be empty")
+	}
 
-	bot, err := tgbotapi.NewBotAPI(config.BotApiKey)
+	if c.BotAPIKey == "" {
+		return errors.New("BotAPIKey cannot be empty")
+	}
+
+	if c.ChatID == 0 {
+		return errors.New("ChatID cannot be empty")
+	}
+
+	return nil
+}
+
+func (c *Config) ParseNodes() ([]*health.NodeInfo, error) {
+	nodeInfos := make([]*health.NodeInfo, 0, len(c.Nodes))
+
+	for _, node := range c.Nodes {
+		ni, err := health.NewNodeInfo(node.IdentityKey, node.Endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing node info: %v", err)
+		}
+
+		nodeInfos = append(nodeInfos, ni)
+	}
+
+	return nodeInfos, nil
+}
+
+func (c *Config) SendAlert(msg string, alarmInterval time.Duration) error {
+
+	if !(c.Notify && time.Since(alarmTime) >= alarmInterval) {
+		return nil
+	}
+
+	bot, err := tgbotapi.NewBotAPI(c.BotAPIKey)
 	if err != nil {
-		log.Panic(err)
+		return fmt.Errorf("failed to initialize telegram bot: %v", err)
 	}
 
 	bot.Debug = false
 
-	//log.Printf("Authorized on account %s", bot.Self.UserName)
+	msgConfig := tgbotapi.NewMessage(c.ChatID, msg)
+	msgConfig.ParseMode = "HTML"
 
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
+	_, err = bot.Send(msgConfig)
+	if err != nil {
+		return fmt.Errorf("failed to alert telegram: %v", err)
+	}
 
-	msg := tgbotapi.NewMessage(config.ChatID, msgString)
+	log.Println("Alerted telegram!")
+	alarmTime = time.Now()
 
-	bot.Send(msg)
+	return nil
+}
 
+func ConstructFormattedAlert(height uint64, hashes map[string]sdk.Hash) string {
+	var builder strings.Builder
+	builder.WriteString("❗Fork Detected\n\n")
+	builder.WriteString("<i><b>Block Height: </b>")
+	builder.WriteString(strconv.Itoa(int(height)))
+	builder.WriteString("</i>\n")
+
+	var hashesMsg strings.Builder
+	for endpoint, hash := range hashes {
+		hashesMsg.WriteString(endpoint)
+		hashesMsg.WriteString(":\n")
+		hashesMsg.WriteString(hash.String())
+		hashesMsg.WriteString("\n\n")
+	}
+
+	builder.WriteString("<pre>")
+	builder.WriteString(hashesMsg.String())
+	builder.WriteString("</pre>")
+
+	return builder.String()
 }
