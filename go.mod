@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/fatih/color v1.16.0
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
-	github.com/proximax-storage/go-xpx-chain-sdk v0.7.5-0.20240122075501-8e8b5abfec38
+	github.com/proximax-storage/go-xpx-chain-sdk v0.7.5-0.20240126021315-c51daa20192f
 	github.com/proximax-storage/go-xpx-crypto v0.1.0
 )
 

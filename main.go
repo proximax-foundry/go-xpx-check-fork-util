@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -22,8 +23,16 @@ import (
 )
 
 var (
-	alarmTime time.Time
-	config    Config
+	config              *Config
+	alarmTime           time.Time
+	heightCheckInterval time.Duration
+	alarmInterval       time.Duration
+	redColorFormatter   func(format string, a ...interface{}) string
+)
+
+const (
+	defaultRollbackDuration = uint64(360)
+	timeoutDuration         = time.Duration(10 * time.Minute)
 )
 
 type Config struct {
@@ -31,19 +40,19 @@ type Config struct {
 		Endpoint    string `json:"endpoint"`
 		IdentityKey string `json:"IdentityKey"`
 	} `json:"nodes"`
-	HeightCheckInterval     uint64 `json:"heightCheckInterval"`
-	ConnectionRetryInterval uint64 `json:"connectionRetryInterval"`
-	AlarmInterval           uint64 `json:"alarmInterval"`
-	PruneHeight             uint64 `json:"pruneHeight"`
-	BotAPIKey               string `json:"botApiKey"`
-	ChatID                  int64  `json:"chatID"`
-	Notify                  bool   `json:"notify"`
+	ApiUrl              string `json:"apiUrl"`
+	HeightCheckInterval uint64 `json:"heightCheckInterval"`
+	AlarmInterval       uint64 `json:"alarmInterval"`
+	BotAPIKey           string `json:"botApiKey"`
+	ChatID              int64  `json:"chatID"`
+	Notify              bool   `json:"notify"`
 }
 
-func main() {
+func init() {
 	fileName := flag.String("file", "config.json", "Name of file to load config from")
 	flag.Parse()
 
+	config = &Config{}
 	if err := config.Load(*fileName); err != nil {
 		log.Fatal("Error:", err)
 	}
@@ -52,42 +61,53 @@ func main() {
 		log.Fatal("Validation Error:", err)
 	}
 
+	heightCheckInterval = time.Duration(config.HeightCheckInterval) * 15 * time.Second
+	alarmInterval = time.Duration(config.AlarmInterval) * time.Hour
+	redColorFormatter = color.New(color.FgRed).SprintfFunc()
+}
+
+func main() {
 	nodeInfos, err := config.ParseNodes()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	client, err := crypto.NewRandomKeyPair()
+	pool, err := initPool(nodeInfos)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	pool, err := health.NewNodeHealthCheckerPool(client, nodeInfos, packets.NoneConnectionSecurity, false, math.MaxInt)
+	client := config.initClient()
+
+	currentHeight, err := client.Blockchain.GetBlockchainHeight(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
+	checkpoint := uint64(currentHeight)
+
+	err = pool.WaitHeightAll(checkpoint, timeoutDuration)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	heightCheckInterval := time.Duration(config.HeightCheckInterval) * 15 * time.Second
-	alarmInterval := time.Duration(config.AlarmInterval) * time.Hour
-	connectionRetryInterval := time.Duration(config.ConnectionRetryInterval) * time.Minute
+	err = pool.WaitAllHashesEqual(checkpoint)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	executionTime := time.Now()
 
-	red := color.New(color.FgRed).SprintfFunc()
-
 	for {
-		maxHeight := pool.MaxHeight()
+		pool.WaitHeightAll(checkpoint, timeoutDuration)
 
-		if err := pool.WaitHeightAll(maxHeight); err != nil {
-			log.Fatal(err)
-		}
+		checkingHeight := checkpoint - RollbackDurationFromNetworkConfig(client, sdk.Height(checkpoint))
 
-		checkingHeight := maxHeight - config.PruneHeight
 		log.Printf("Checking block hash at %d height", checkingHeight)
-
-		if hashes := pool.FindInconsistentHashesAtHeight(checkingHeight); hashes != nil {
-			log.Print(red("Fork Detected! Block Height: %d", checkingHeight))
+		hashes := pool.FindInconsistentHashesAtHeight(checkingHeight)
+		if hashes != nil {
+			log.Print(redColorFormatter("Fork Detected! Block Height: %d", checkingHeight))
 			for endpoint, hash := range hashes {
-				log.Print(red("%s: %s", endpoint, hash))
+				log.Print(redColorFormatter("%s: %s", endpoint, hash))
 			}
 
 			formattedAlert := ConstructFormattedAlert(checkingHeight, hashes)
@@ -96,39 +116,62 @@ func main() {
 			}
 		}
 
-		if time.Since(executionTime) >= connectionRetryInterval {
-			pool = ReconnectAll(pool, nodeInfos, client)
-			executionTime = time.Now()
+		// Periodically search for new peers to add to the connection pool
+		if time.Since(executionTime) >= (2 * time.Hour) {
+			pool.CollectConnectedNodes()
 		}
 
+		checkpoint += config.HeightCheckInterval
 		time.Sleep(heightCheckInterval)
 	}
 }
 
-func ReconnectAll(pool *health.NodeHealthCheckerPool, nodeInfos []*health.NodeInfo, client *crypto.KeyPair) *health.NodeHealthCheckerPool {
-	log.Println("Resetting connection pool")
-
-	if err := pool.Close(); err != nil {
-		log.Fatal(err)
-	}
-
-	pool, err := health.NewNodeHealthCheckerPool(client, nodeInfos, packets.NoneConnectionSecurity, false, math.MaxInt)
+func initPool(nodeInfos []*health.NodeInfo) (*health.NodeHealthCheckerPool, error) {
+	clientKeyPair, err := crypto.NewRandomKeyPair()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error generating random keypair: %s", err)
 	}
 
-	return pool
+	return health.NewNodeHealthCheckerPool(clientKeyPair, nodeInfos, packets.NoneConnectionSecurity, true, math.MaxInt)
+}
+
+func (c *Config) initClient() *sdk.Client {
+	conf, err := sdk.NewConfig(context.Background(), []string{c.ApiUrl})
+	if err != nil {
+		log.Fatalf("Error initializing config from url %s:", c.ApiUrl, err)
+	}
+
+	return sdk.NewClient(nil, conf)
+}
+
+func RollbackDurationFromNetworkConfig(client *sdk.Client, height sdk.Height) uint64 {
+	config, err := client.Network.GetNetworkConfigAtHeight(context.Background(), height)
+	if err != nil {
+		return defaultRollbackDuration
+	}
+
+	val, ok := config.NetworkConfig.Sections["chain"].Fields["maxRollbackBlocks"]
+	if !ok {
+		return defaultRollbackDuration
+	}
+
+	i, err := strconv.ParseUint(val.Value, 10, 64)
+	if err != nil {
+		return defaultRollbackDuration
+	}
+
+	return i
 }
 
 func (c *Config) Load(fileName string) error {
 	content, err := os.ReadFile(fileName)
 	if err != nil {
-		return fmt.Errorf("error reading config file '%s': %v", fileName, err)
+		return fmt.Errorf("Error reading config file '%s': %v", fileName, err)
 	}
 
 	err = json.Unmarshal(content, c)
 	if err != nil {
-		return fmt.Errorf("error un-marshalling config file '%s': %v", fileName, err)
+		return fmt.Errorf("Error unmarshalling config file '%s': %v", fileName, err)
 	}
 
 	return nil
@@ -137,6 +180,10 @@ func (c *Config) Load(fileName string) error {
 func (c *Config) Validate() error {
 	if len(c.Nodes) == 0 {
 		return errors.New("Nodes cannot be empty")
+	}
+
+	if c.ApiUrl == "" {
+		return errors.New("API url cannot be empty")
 	}
 
 	if c.BotAPIKey == "" {
@@ -156,7 +203,7 @@ func (c *Config) ParseNodes() ([]*health.NodeInfo, error) {
 	for _, node := range c.Nodes {
 		ni, err := health.NewNodeInfo(node.IdentityKey, node.Endpoint)
 		if err != nil {
-			return nil, fmt.Errorf("error parsing node info: %v", err)
+			return nil, fmt.Errorf("Error parsing node info: %v", err)
 		}
 
 		nodeInfos = append(nodeInfos, ni)
@@ -166,14 +213,13 @@ func (c *Config) ParseNodes() ([]*health.NodeInfo, error) {
 }
 
 func (c *Config) SendAlert(msg string, alarmInterval time.Duration) error {
-
 	if !(c.Notify && time.Since(alarmTime) >= alarmInterval) {
 		return nil
 	}
 
 	bot, err := tgbotapi.NewBotAPI(c.BotAPIKey)
 	if err != nil {
-		return fmt.Errorf("failed to initialize telegram bot: %v", err)
+		return fmt.Errorf("Failed to initialize telegram bot: %v", err)
 	}
 
 	bot.Debug = false
@@ -183,7 +229,7 @@ func (c *Config) SendAlert(msg string, alarmInterval time.Duration) error {
 
 	_, err = bot.Send(msgConfig)
 	if err != nil {
-		return fmt.Errorf("failed to alert telegram: %v", err)
+		return fmt.Errorf("Failed to send message to telegram: %v", err)
 	}
 
 	log.Println("Alerted telegram!")

@@ -25,10 +25,9 @@ Configurations can be made to the script by changing the values to the fields in
             "IdentityKey": "4F7A80E9D6C2A4F5B46B90A1D16E95D4C1B8A3E8D5D1479D7C802C475D70A2E"
         }         
     ],
-    "connectionRetryInterval": 1,
+    "apiUrl": "https://localhost:3000",
+    "heightCheckInterval": 1,
     "alarmInterval": 1,
-    "heightCheckInterval": 10,
-    "pruneHeight": 360, 
     "botApiKey": "<TELEGRAM_BOT_API_KEY>",
     "chatID": 1234567,
     "notify": true
@@ -38,10 +37,9 @@ Configurations can be made to the script by changing the values to the fields in
 * `nodes`: List of nodes (API and PEER) to compare block hashes.
     * `Endpoint`: Node's host and port.
     * `IdentityKey` Node's public key.
-* `connectionRetryInterval`: Time interval (*in hours*) to reconnect to nodes.
-* `alarmInterval`: Time interval (*in hours*) the telegram bot will send notification if a fork is detected.
+* `apiUrl`: URL of the REST server.
 * `heightCheckInterval`: Number of blocks between each block hash check.
-* `pruneHeight`: Block height interval of last confirmed block.
+* `alarmInterval`: Time interval (*in hours*) the telegram bot will send notification if a fork is detected.
 * `botApiKey`: Telegram bot's API key.
 * `chatID`: Telegram chat ID where notifications will be received.
 * `notify`: Option to enable or disable telegram notification (`false` by default).
@@ -49,12 +47,12 @@ Configurations can be made to the script by changing the values to the fields in
 <br/>
 
 ## Usage
-```go
+```bash
 go build -o check-fork-util
 
-// Running with default configuration file: "config.json"
+# Running with default configuration file: "config.json"
 ./check-fork-util
 
-// Running with specific configuration file using the `-file` flag
+# Running with specific configuration file using the `-file` flag
 ./check-fork-util -file "specific-config.json"
 ```
