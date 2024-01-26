@@ -5,10 +5,9 @@
             "IdentityKey": "4F7A80E9D6C2A4F5B46B90A1D16E95D4C1B8A3E8D5D1479D7C802C475D70A2E"
         }         
     ],
-    "connectionRetryInterval": 1,
+    "apiUrl": "https://localhost:3000",
+    "heightCheckInterval": 1,
     "alarmInterval": 1,
-    "heightCheckInterval": 10,
-    "pruneHeight": 360, 
     "botApiKey": "<TELEGRAM_BOT_API_KEY>",
     "chatID": 1234567,
     "notify": true
