@@ -22,17 +22,12 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-var (
-	config              *Config
-	alarmTime           time.Time
-	heightCheckInterval time.Duration
-	alarmInterval       time.Duration
-	redColorFormatter   func(format string, a ...interface{}) string
-)
+var redColorFormatter = color.New(color.FgRed).SprintfFunc()
 
 const (
-	defaultRollbackDuration = uint64(360)
-	timeoutDuration         = time.Duration(10 * time.Minute)
+	DefaultRollbackBlocks  = uint64(360)
+	WaitHeightTimeout      = time.Duration(10 * time.Minute)
+	PeersDiscoveryInterval = time.Duration(1 * time.Hour)
 )
 
 type Config struct {
@@ -40,84 +35,67 @@ type Config struct {
 		Endpoint    string `json:"endpoint"`
 		IdentityKey string `json:"IdentityKey"`
 	} `json:"nodes"`
-	ApiUrl              string `json:"apiUrl"`
-	HeightCheckInterval uint64 `json:"heightCheckInterval"`
-	AlarmInterval       uint64 `json:"alarmInterval"`
-	BotAPIKey           string `json:"botApiKey"`
-	ChatID              int64  `json:"chatID"`
-	Notify              bool   `json:"notify"`
-}
-
-func init() {
-	fileName := flag.String("file", "config.json", "Name of file to load config from")
-	flag.Parse()
-
-	config = &Config{}
-	if err := config.Load(*fileName); err != nil {
-		log.Fatal("Error:", err)
-	}
-
-	if err := config.Validate(); err != nil {
-		log.Fatal("Validation Error:", err)
-	}
-
-	heightCheckInterval = time.Duration(config.HeightCheckInterval) * 15 * time.Second
-	alarmInterval = time.Duration(config.AlarmInterval) * time.Hour
-	redColorFormatter = color.New(color.FgRed).SprintfFunc()
+	ApiUrls             []string `json:"apiUrls"`
+	HeightCheckInterval uint64   `json:"heightCheckInterval"`
+	AlarmInterval       uint64   `json:"alarmInterval"`
+	BotAPIKey           string   `json:"botApiKey"`
+	ChatID              int64    `json:"chatID"`
+	Notify              bool     `json:"notify"`
+	lastHashAlertTime   *time.Time
+	lastSyncAlertTime   *time.Time
 }
 
 func main() {
+	fileName := flag.String("file", "config.json", "Name of file to load config from")
+	flag.Parse()
+
+	config, err := LoadConfig(*fileName)
+	if err != nil {
+		log.Fatalf("Error loading config: %v", err)
+	}
+
 	nodeInfos, err := config.ParseNodes()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	client, err := config.initClient()
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	pool, err := initPool(nodeInfos)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error initializing connection pool: %v", err)
 	}
-
-	client := config.initClient()
 
 	currentHeight, err := client.Blockchain.GetBlockchainHeight(context.Background())
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error getting blockchain height: %v", err)
 	}
+
 	checkpoint := uint64(currentHeight)
-
-	err = pool.WaitHeightAll(checkpoint, timeoutDuration)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = pool.WaitAllHashesEqual(checkpoint)
-	if err != nil {
-		log.Fatal(err)
-	}
-
+	alarmInterval := time.Duration(config.AlarmInterval) * time.Hour
+	heightCheckInterval := time.Duration(config.HeightCheckInterval) * 15 * time.Second
 	executionTime := time.Now()
 
 	for {
-		pool.WaitHeightAll(checkpoint, timeoutDuration)
-
-		checkingHeight := checkpoint - RollbackDurationFromNetworkConfig(client, sdk.Height(checkpoint))
-
-		log.Printf("Checking block hash at %d height", checkingHeight)
-		hashes := pool.FindInconsistentHashesAtHeight(checkingHeight)
-		if hashes != nil {
-			log.Print(redColorFormatter("Fork Detected! Block Height: %d", checkingHeight))
-			for endpoint, hash := range hashes {
-				log.Print(redColorFormatter("%s: %s", endpoint, hash))
-			}
-
-			formattedAlert := ConstructFormattedAlert(checkingHeight, hashes)
-			if err := config.SendAlert(formattedAlert, alarmInterval); err != nil {
-				log.Print(err)
-			}
+		err := config.AlertOnPoolWaitHeightFailure(pool, checkpoint, WaitHeightTimeout, alarmInterval)
+		if err != nil {
+			log.Printf("Error alerting telegram: %v", err)
 		}
 
-		// Periodically search for new peers to add to the connection pool
-		if time.Since(executionTime) >= (2 * time.Hour) {
+		// Check the block hash of last confirmed block
+		lastConfirmedBlockHeight := checkpoint - RollbackDurationFromNetworkConfig(client, sdk.Height(checkpoint))
+		log.Printf("Checking block hash at %d height", lastConfirmedBlockHeight)
+
+		err = config.AlertOnInconsistentHashes(pool, lastConfirmedBlockHeight, alarmInterval)
+		if err != nil {
+			log.Printf("Error alerting telegram: %v", err)
+		}
+
+		// Periodically seeks new peers to add to the connection pool at specified intervals
+		if time.Since(executionTime) >= PeersDiscoveryInterval {
 			pool.CollectConnectedNodes()
 		}
 
@@ -135,46 +113,64 @@ func initPool(nodeInfos []*health.NodeInfo) (*health.NodeHealthCheckerPool, erro
 	return health.NewNodeHealthCheckerPool(clientKeyPair, nodeInfos, packets.NoneConnectionSecurity, true, math.MaxInt)
 }
 
-func (c *Config) initClient() *sdk.Client {
-	conf, err := sdk.NewConfig(context.Background(), []string{c.ApiUrl})
-	if err != nil {
-		log.Fatalf("Error initializing config from url %s:", c.ApiUrl, err)
+func (c *Config) initClient() (*sdk.Client, error) {
+	var conf *sdk.Config
+	var err error
+
+	for _, url := range c.ApiUrls {
+		conf, err = sdk.NewConfig(context.Background(), []string{url})
+		if err == nil {
+			log.Printf("Initialized client on URL: %s", url)
+			break
+		}
 	}
 
-	return sdk.NewClient(nil, conf)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to initialize client. All provided URLs failed: %v", err)
+	}
+
+	return sdk.NewClient(nil, conf), nil
 }
 
 func RollbackDurationFromNetworkConfig(client *sdk.Client, height sdk.Height) uint64 {
 	config, err := client.Network.GetNetworkConfigAtHeight(context.Background(), height)
 	if err != nil {
-		return defaultRollbackDuration
+		return DefaultRollbackBlocks
 	}
 
 	val, ok := config.NetworkConfig.Sections["chain"].Fields["maxRollbackBlocks"]
 	if !ok {
-		return defaultRollbackDuration
+		return DefaultRollbackBlocks
 	}
 
 	i, err := strconv.ParseUint(val.Value, 10, 64)
 	if err != nil {
-		return defaultRollbackDuration
+		return DefaultRollbackBlocks
 	}
 
 	return i
 }
 
-func (c *Config) Load(fileName string) error {
+func LoadConfig(fileName string) (*Config, error) {
 	content, err := os.ReadFile(fileName)
 	if err != nil {
-		return fmt.Errorf("Error reading config file '%s': %v", fileName, err)
+		return nil, fmt.Errorf("failed reading config file '%s': %w", fileName, err)
 	}
 
-	err = json.Unmarshal(content, c)
+	config := &Config{}
+	if err := json.Unmarshal(content, config); err != nil {
+		return nil, fmt.Errorf("failed unmarshalling config file '%s': %w", fileName, err)
+	}
+
+	err = config.Validate()
 	if err != nil {
-		return fmt.Errorf("Error unmarshalling config file '%s': %v", fileName, err)
+		return nil, fmt.Errorf("validation error in config file '%s': %w", fileName, err)
 	}
 
-	return nil
+	config.lastHashAlertTime = new(time.Time)
+	config.lastSyncAlertTime = new(time.Time)
+
+	return config, nil
 }
 
 func (c *Config) Validate() error {
@@ -182,7 +178,7 @@ func (c *Config) Validate() error {
 		return errors.New("Nodes cannot be empty")
 	}
 
-	if c.ApiUrl == "" {
+	if len(c.ApiUrls) == 0 {
 		return errors.New("API url cannot be empty")
 	}
 
@@ -212,14 +208,14 @@ func (c *Config) ParseNodes() ([]*health.NodeInfo, error) {
 	return nodeInfos, nil
 }
 
-func (c *Config) SendAlert(msg string, alarmInterval time.Duration) error {
-	if !(c.Notify && time.Since(alarmTime) >= alarmInterval) {
+func (c *Config) SendAlert(msg string, alarmTime *time.Time, alarmInterval time.Duration) error {
+	if !(c.Notify && (time.Since(*alarmTime) >= alarmInterval)) {
 		return nil
 	}
 
 	bot, err := tgbotapi.NewBotAPI(c.BotAPIKey)
 	if err != nil {
-		return fmt.Errorf("Failed to initialize telegram bot: %v", err)
+		return fmt.Errorf("failed to initialize telegram bot: %v", err)
 	}
 
 	bot.Debug = false
@@ -229,32 +225,85 @@ func (c *Config) SendAlert(msg string, alarmInterval time.Duration) error {
 
 	_, err = bot.Send(msgConfig)
 	if err != nil {
-		return fmt.Errorf("Failed to send message to telegram: %v", err)
+		return fmt.Errorf("failed to send message to telegram: %v", err)
 	}
 
 	log.Println("Alerted telegram!")
-	alarmTime = time.Now()
+	*alarmTime = time.Now()
 
 	return nil
 }
 
-func ConstructFormattedAlert(height uint64, hashes map[string]sdk.Hash) string {
+// Sends an alert if the pool fails to wait for nodes reaching certain height
+func (c *Config) AlertOnPoolWaitHeightFailure(pool *health.NodeHealthCheckerPool, height uint64, timeout time.Duration, alarmInterval time.Duration) error {
+	err := pool.WaitHeightAll(height, timeout)
+	if err != nil {
+		msg := NetworkSyncAlertString(err.Error())
+		return c.SendAlert(msg, c.lastSyncAlertTime, alarmInterval)
+	}
+
+	return nil
+}
+
+// Sends an alert if the pool finds inconsistent hashes at a certain height
+func (c *Config) AlertOnInconsistentHashes(pool *health.NodeHealthCheckerPool, height uint64, alarmInterval time.Duration) error {
+	hashes := pool.FindInconsistentHashesAtHeight(height)
+	if hashes != nil {
+		log.Print(redColorFormatter("Fork Detected! Block Height: %d", height))
+		for endpoint, hash := range hashes {
+			log.Print(redColorFormatter("%s: %s", endpoint, hash))
+		}
+
+		msg := BlockHashAlertString(height, hashes)
+		return c.SendAlert(msg, c.lastHashAlertTime, alarmInterval)
+	}
+
+	return nil
+}
+
+func BlockHashAlertString(height uint64, hashes map[string]sdk.Hash) string {
 	var builder strings.Builder
-	builder.WriteString("❗Fork Detected\n\n")
-	builder.WriteString("<i><b>Block Height: </b>")
+	builder.WriteString("<b>❗Fork Alert</b>\n\n")
+	builder.WriteString("<i>Inconsistent block hash at height:  ")
 	builder.WriteString(strconv.Itoa(int(height)))
 	builder.WriteString("</i>\n")
 
-	var hashesMsg strings.Builder
+	groups := make(map[sdk.Hash][]string)
 	for endpoint, hash := range hashes {
-		hashesMsg.WriteString(endpoint)
-		hashesMsg.WriteString(":\n")
-		hashesMsg.WriteString(hash.String())
+		groups[hash] = append(groups[hash], endpoint)
+	}
+
+	var hashesMsg strings.Builder
+	for hash, endpoints := range groups {
+		for _, endpoint := range endpoints {
+			hashesMsg.WriteString(endpoint)
+			hashesMsg.WriteString(":\n")
+			hashesMsg.WriteString(hash.String())
+			hashesMsg.WriteString("\n\n")
+		}
+
 		hashesMsg.WriteString("\n\n")
 	}
 
 	builder.WriteString("<pre>")
 	builder.WriteString(hashesMsg.String())
+	builder.WriteString("</pre>")
+
+	return builder.String()
+}
+
+func NetworkSyncAlertString(message string) string {
+	msg := strings.SplitN(message, "\n", 2)
+
+	var builder strings.Builder
+	builder.WriteString("⚠️ <b>Fork Alert</b>\n\n")
+	builder.WriteString("<i>")
+	builder.WriteString(msg[0])
+	builder.WriteString("</i>")
+	builder.WriteString("\n\nOut-of-sync nodes:\n")
+
+	builder.WriteString("<pre>")
+	builder.WriteString(msg[1])
 	builder.WriteString("</pre>")
 
 	return builder.String()
