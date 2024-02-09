@@ -37,6 +37,7 @@ Configurations can be made to the script by changing the values to the fields in
         "https://localhost:3000",
         "https://localhost:3001"
     ],
+    "discover": true,
     "heightCheckInterval": 5,
     "alarmInterval": 1,
     "botApiKey": "<TELEGRAM_BOT_API_KEY>",
@@ -49,6 +50,7 @@ Configurations can be made to the script by changing the values to the fields in
     * `Endpoint`: Node's host and port.
     * `IdentityKey` Node's public key.
 * `apiUrls`: URLs of the REST servers.
+* `discover`: Option to enable or disable peer discovery.
 * `heightCheckInterval`: Number of blocks between each block hash check.
 * `alarmInterval`: Time interval (*in hours*) the telegram bot will send notification if a fork is detected.
 * `botApiKey`: Telegram bot's API key.

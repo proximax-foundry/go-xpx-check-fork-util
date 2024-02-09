@@ -13,6 +13,7 @@
         "https://localhost:3000",
         "https://localhost:3001"
     ],
+    "discover": true,
     "heightCheckInterval": 1,
     "alarmInterval": 1,
     "botApiKey": "<TELEGRAM_BOT_API_KEY>",
