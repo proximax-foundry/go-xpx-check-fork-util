@@ -1,0 +1,15 @@
+<b>❗Fork Alert </b>
+
+<i>Inconsistent block hash at height:</i>  {{.Height}}
+
+<pre>
+{{- range $hash, $endpoints := .HashesGroup -}}
+{{$hash}}:{{"\n\n"}}
+
+{{- range $endpoints -}}
+{{.}}{{"\n"}} 
+{{- end -}}
+
+{{"\n\n"}}
+{{- end -}}
+</pre>

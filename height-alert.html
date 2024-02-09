@@ -1,0 +1,10 @@
+<b>⚠️ Fork Alert </b>
+
+<i>Current network height:</i>  {{.Height}}
+
+Out-of-sync nodes:
+<pre>
+{{- range $node, $height := .NotReached -}}
+{{$node}} - {{$height}}{{"\n"}} 
+{{- end -}}
+</pre>
