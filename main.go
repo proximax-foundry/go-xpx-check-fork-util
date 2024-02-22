@@ -31,7 +31,7 @@ type (
 	Config struct {
 		Nodes               Nodes    `json:"nodes"`
 		ApiUrls             []string `json:"apiUrls"`
-		Discover       bool     `json:"discover"`
+		Discover            bool     `json:"discover"`
 		HeightCheckInterval uint64   `json:"heightCheckInterval"`
 		AlarmInterval       uint64   `json:"alarmInterval"`
 		BotAPIKey           string   `json:"botApiKey"`
@@ -41,8 +41,11 @@ type (
 
 	Notifier struct {
 		bot               *tgbotapi.BotAPI
+		chatID            int64
+		alarmInterval     time.Duration
 		lastHashAlertTime time.Time
 		lastSyncAlertTime time.Time
+		enabled           bool
 	}
 
 	ForkChecker struct {
@@ -50,7 +53,16 @@ type (
 		notifier       *Notifier
 		catapultClient *sdk.Client
 		nodePool       *health.NodeHealthCheckerPool
+		executionTime  time.Time
+		checkpoint     uint64
 	}
+)
+
+var (
+	ErrEmptyNodes  = errors.New("Nodes cannot be empty")
+	ErrEmptyApiUrl = errors.New("API url cannot be empty")
+	ErrEmptyBotKey = errors.New("BotAPIKey cannot be empty")
+	ErrEmptyChatId = errors.New("ChatID cannot be empty")
 )
 
 const (
@@ -96,19 +108,19 @@ func LoadConfig(fileName string) (*Config, error) {
 
 func (c *Config) Validate() error {
 	if len(c.Nodes) == 0 {
-		return errors.New("Nodes cannot be empty")
+		return ErrEmptyNodes
 	}
 
 	if len(c.ApiUrls) == 0 {
-		return errors.New("API url cannot be empty")
+		return ErrEmptyApiUrl
 	}
 
 	if c.BotAPIKey == "" {
-		return errors.New("BotAPIKey cannot be empty")
+		return ErrEmptyBotKey
 	}
 
 	if c.ChatID == 0 {
-		return errors.New("ChatID cannot be empty")
+		return ErrEmptyChatId
 	}
 
 	return nil
@@ -120,7 +132,7 @@ func ParseNodes(nodes Nodes) ([]*health.NodeInfo, error) {
 	for _, node := range nodes {
 		ni, err := health.NewNodeInfo(node.IdentityKey, node.Endpoint)
 		if err != nil {
-			return nil, fmt.Errorf("Error parsing node info: %v", err)
+			return nil, err
 		}
 
 		nodeInfos = append(nodeInfos, ni)
@@ -129,8 +141,16 @@ func ParseNodes(nodes Nodes) ([]*health.NodeInfo, error) {
 	return nodeInfos, nil
 }
 
-func (n *Notifier) SendAlert(chatID int64, text string, alarmTime *time.Time) error {
-	msgConfig := tgbotapi.NewMessage(chatID, text)
+func (n *Notifier) IsEnabled() bool {
+	return n.enabled
+}
+
+func (n *Notifier) canAlert(lastAlertTime time.Time) bool {
+	return n.IsEnabled() && (lastAlertTime.IsZero() || time.Since(lastAlertTime) >= n.alarmInterval)
+}
+
+func (n *Notifier) SendAlert(text string, alarmTime *time.Time) error {
+	msgConfig := tgbotapi.NewMessage(n.chatID, text)
 	msgConfig.ParseMode = "HTML"
 
 	_, err := n.bot.Send(msgConfig)
@@ -144,28 +164,41 @@ func (n *Notifier) SendAlert(chatID int64, text string, alarmTime *time.Time) er
 	return nil
 }
 
-func (n *Notifier) AlertOnPoolWaitHeightFailure(chatID int64, height uint64, notReached map[string]uint64, interval time.Duration) {
-	msg := HeightAlertString(height, notReached)
-	if n.lastSyncAlertTime.IsZero() || n.lastSyncAlertTime.Before(time.Now().Add(-interval)) {
-		if err := n.SendAlert(chatID, msg, &n.lastSyncAlertTime); err != nil {
-			log.Printf("Error alerting on pool wait height failure: %v", err)
+func (n *Notifier) AlertOnPoolWaitHeightFailure(height uint64, notReached map[string]uint64) {
+	if n.canAlert(n.lastSyncAlertTime) {
+		msg, err := HeightAlertString(height, notReached)
+		if err != nil {
+			log.Printf("Error creating height alert message: %v", err)
+			return
+		}
+
+		if err := n.SendAlert(msg, &n.lastSyncAlertTime); err != nil {
+			log.Printf("Error sending alert on pool wait height failure: %v", err)
+			return
 		}
 	}
 }
 
-func (n *Notifier) AlertOnInconsistentHashes(chatID int64, height uint64, hashes map[string]sdk.Hash, interval time.Duration) {
-	msg := HashAlertString(height, hashes)
-	if n.lastHashAlertTime.IsZero() || n.lastHashAlertTime.Before(time.Now().Add(-interval)) {
-		if err := n.SendAlert(chatID, msg, &n.lastHashAlertTime); err != nil {
-			log.Printf("Error alerting on inconsistent block hashes: %v", err)
+func (n *Notifier) AlertOnInconsistentHashes(height uint64, hashes map[string]sdk.Hash) {
+	if n.canAlert(n.lastHashAlertTime) {
+		msg, err := HashAlertString(height, hashes)
+		if err != nil {
+			log.Printf("Error creating hash alert message: %v", err)
+			return
+		}
+
+		if err := n.SendAlert(msg, &n.lastHashAlertTime); err != nil {
+			log.Printf("Error sending alert on inconsistent block hashes: %v", err)
+			return
 		}
 	}
 }
 
-func HeightAlertString(height uint64, notReached map[string]uint64) string {
-	tmpl, err := template.ParseFiles("height-alert.html")
+func HeightAlertString(height uint64, notReached map[string]uint64) (string, error) {
+	tmplFile := "height-alert.html"
+	tmpl, err := template.ParseFiles(tmplFile)
 	if err != nil {
-		log.Fatal(err)
+		return "", fmt.Errorf("error parsing template from '%s': %v", tmplFile, err)
 	}
 
 	var buf bytes.Buffer
@@ -176,19 +209,23 @@ func HeightAlertString(height uint64, notReached map[string]uint64) string {
 		height,
 		notReached,
 	})
+	if err != nil {
+		return "", fmt.Errorf("error execute template: %v", err)
+	}
 
-	return buf.String()
+	return buf.String(), nil
 }
 
-func HashAlertString(height uint64, hashes map[string]sdk.Hash) string {
+func HashAlertString(height uint64, hashes map[string]sdk.Hash) (string, error) {
 	hashesGroup := make(map[sdk.Hash][]string)
 	for endpoint, hash := range hashes {
 		hashesGroup[hash] = append(hashesGroup[hash], endpoint)
 	}
 
-	tmpl, err := template.ParseFiles("hash-alert.html")
+	tmplFile := "hash-alert.html"
+	tmpl, err := template.ParseFiles(tmplFile)
 	if err != nil {
-		log.Fatal(err)
+		return "", fmt.Errorf("error parsing template from '%s': %v", tmplFile, err)
 	}
 
 	var buf bytes.Buffer
@@ -199,36 +236,36 @@ func HashAlertString(height uint64, hashes map[string]sdk.Hash) string {
 		height,
 		hashesGroup,
 	})
+	if err != nil {
+		return "", fmt.Errorf("error execute template: %v", err)
+	}
 
-	return buf.String()
+	return buf.String(), nil
 }
 
 func NewForkChecker(config Config) (*ForkChecker, error) {
 	f := &ForkChecker{cfg: config}
 
-	client, err := f.initClient()
-	if err != nil {
-		return nil, fmt.Errorf("Failed to initialize catapult client: %v", err)
+	if err := f.initClient(); err != nil {
+		return nil, fmt.Errorf("failed to initialize catapult client: %v", err)
 	}
 
-	notifier, err := f.initNotifier()
-	if err != nil {
-		return nil, fmt.Errorf("Failed to initialize telegram bot: %v", err)
+	if err := f.initNotifier(); err != nil {
+		return nil, fmt.Errorf("failed to initialize notifier: %v", err)
 	}
 
-	pool, err := f.initPool()
-	if err != nil {
-		return nil, fmt.Errorf("Failed to initialize node health checker pool: %v", err)
+	if err := f.initPool(); err != nil {
+		return nil, fmt.Errorf("failed to initialize node health checker pool: %v", err)
 	}
 
-	f.catapultClient = client
-	f.notifier = notifier
-	f.nodePool = pool
+	if err := f.initCheckpoint(); err != nil {
+		return nil, fmt.Errorf("failed to initialize checkpoint: %v", err)
+	}
 
 	return f, nil
 }
 
-func (f *ForkChecker) initClient() (*sdk.Client, error) {
+func (f *ForkChecker) initClient() error {
 	var conf *sdk.Config
 	var err error
 
@@ -241,32 +278,43 @@ func (f *ForkChecker) initClient() (*sdk.Client, error) {
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("All provided URLs failed: %v", err)
+		return fmt.Errorf("all provided URLs failed: %v", err)
 	}
 
-	return sdk.NewClient(nil, conf), nil
+	f.catapultClient = sdk.NewClient(nil, conf)
+
+	return nil
 }
 
-func (f *ForkChecker) initNotifier() (*Notifier, error) {
+func (f *ForkChecker) initNotifier() error {
 	bot, err := tgbotapi.NewBotAPI(f.cfg.BotAPIKey)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("failed to initialize telegram bot: %v", err)
 	}
 
 	bot.Debug = false
 
-	return &Notifier{bot, time.Time{}, time.Time{}}, nil
+	f.notifier = &Notifier{
+		bot,
+		f.cfg.ChatID,
+		time.Duration(f.cfg.AlarmInterval) * time.Hour,
+		time.Time{},
+		time.Time{},
+		f.cfg.Notify,
+	}
+
+	return nil
 }
 
-func (f *ForkChecker) initPool() (*health.NodeHealthCheckerPool, error) {
+func (f *ForkChecker) initPool() error {
 	clientKeyPair, err := crypto.NewRandomKeyPair()
 	if err != nil {
-		return nil, fmt.Errorf("Error generating random keypair: %s", err)
+		return fmt.Errorf("error generating random keypair: %s", err)
 	}
 
 	nodeInfos, err := ParseNodes(f.cfg.Nodes)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("error parsing node info: %v", err)
 	}
 
 	healthCheckerPool, err := health.NewNodeHealthCheckerPool(
@@ -277,14 +325,15 @@ func (f *ForkChecker) initPool() (*health.NodeHealthCheckerPool, error) {
 		math.MaxInt,
 	)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return healthCheckerPool, nil
+	f.nodePool = healthCheckerPool
+	return nil
 }
 
-func (f *ForkChecker) RollbackDurationFromNetworkConfig(height uint64) uint64 {
-	config, err := f.catapultClient.Network.GetNetworkConfigAtHeight(context.Background(), sdk.Height(height))
+func (f *ForkChecker) RollbackDurationFromNetworkConfig() uint64 {
+	config, err := f.catapultClient.Network.GetNetworkConfigAtHeight(context.Background(), sdk.Height(f.checkpoint))
 	if err != nil {
 		return DefaultRollbackBlocks
 	}
@@ -302,46 +351,46 @@ func (f *ForkChecker) RollbackDurationFromNetworkConfig(height uint64) uint64 {
 	return i
 }
 
-func (f *ForkChecker) CurrentBlockchainHeight(ctx context.Context) (uint64, error) {
+func (f *ForkChecker) initCheckpoint() error {
 	height, err := f.catapultClient.Blockchain.GetBlockchainHeight(context.Background())
 	if err != nil {
-		return 0, nil
+		return fmt.Errorf("error getting blockchain height: %v", err)
 	}
 
-	return uint64(height), nil
+	f.checkpoint = uint64(height)
+
+	return nil
 }
 
 func (f *ForkChecker) Start() {
-	checkpoint, err := f.CurrentBlockchainHeight(context.Background())
-	if err != nil {
-		log.Fatalf("Error getting blockchain height: %v", err)
-	}
-
-	executionTime := time.Now()
-	alarmInterval := time.Duration(f.cfg.AlarmInterval) * time.Hour
+	f.executionTime = time.Now()
 
 	for {
-		notReached := f.nodePool.WaitHeight(checkpoint)
+		log.Println("Checkpoint:", f.checkpoint)
+
+		// Wait for nodes to reach checkpoint height
+		notReached := f.nodePool.WaitHeight(f.checkpoint)
 		if len(notReached) != 0 {
-			f.notifier.AlertOnPoolWaitHeightFailure(f.cfg.ChatID, checkpoint, notReached, alarmInterval)
+			f.notifier.AlertOnPoolWaitHeightFailure(f.checkpoint, notReached)
 		}
 
 		// Check the block hash of last confirmed block
-		lastConfirmedBlockHeight := checkpoint - f.RollbackDurationFromNetworkConfig(checkpoint)
+		lastConfirmedBlockHeight := f.checkpoint - f.RollbackDurationFromNetworkConfig()
 		log.Printf("Checking block hash at %d height", lastConfirmedBlockHeight)
 
 		success, hashes := f.nodePool.CheckHashes(lastConfirmedBlockHeight)
 		if !success {
-			f.notifier.AlertOnInconsistentHashes(f.cfg.ChatID, lastConfirmedBlockHeight, hashes, alarmInterval)
+			f.notifier.AlertOnInconsistentHashes(lastConfirmedBlockHeight, hashes)
 		}
 
-		// Periodically seeks for new peers in the network
-		if f.cfg.Discover && time.Since(executionTime) >= PeersDiscoveryInterval {
+		// Periodically discover new peers in the network
+		if f.cfg.Discover && time.Since(f.executionTime) >= PeersDiscoveryInterval {
 			f.nodePool.CollectConnectedNodes()
+			f.executionTime = time.Now()
 		}
 
-		checkpoint += f.cfg.HeightCheckInterval
-		time.Sleep(15 * time.Second * time.Duration(f.cfg.HeightCheckInterval))
+		// Update checkpoint and sleep until the next checkpoint
+		f.checkpoint += f.cfg.HeightCheckInterval
+		time.Sleep(health.AvgSecondsPerBlock * time.Duration(f.cfg.HeightCheckInterval))
 	}
-
 }
