@@ -11,7 +11,7 @@ import (
 	"math"
 	"os"
 	"strconv"
-	"text/template"
+	"strings"
 	"time"
 
 	"github.com/proximax-storage/go-xpx-chain-sdk/sdk"
@@ -49,12 +49,14 @@ type (
 	}
 
 	ForkChecker struct {
-		cfg            Config
-		notifier       *Notifier
-		catapultClient *sdk.Client
-		nodePool       *health.NodeHealthCheckerPool
-		executionTime  time.Time
-		checkpoint     uint64
+		cfg                    Config
+		notifier               *Notifier
+		catapultClient         *sdk.Client
+		nodeInfos              []*health.NodeInfo
+		nodePool               *health.NodeHealthCheckerPool
+		failedConnectionsNodes []*health.NodeInfo
+		executionTime          time.Time
+		checkpoint             uint64
 	}
 )
 
@@ -68,6 +70,7 @@ var (
 const (
 	DefaultRollbackBlocks  = uint64(360)
 	PeersDiscoveryInterval = time.Hour
+	AlarmInterval          = time.Hour
 )
 
 func main() {
@@ -84,7 +87,10 @@ func main() {
 		log.Fatalf("Failed to setup fork checker: %v", err)
 	}
 
-	f.Start()
+	err = f.Start()
+	if err != nil {
+		log.Fatalf("Error running fork checker: %v", err)
+	}
 }
 
 func LoadConfig(fileName string) (*Config, error) {
@@ -164,14 +170,9 @@ func (n *Notifier) SendAlert(text string, alarmTime *time.Time) error {
 	return nil
 }
 
-func (n *Notifier) AlertOnPoolWaitHeightFailure(height uint64, notReached map[string]uint64) {
+func (n *Notifier) AlertOnPoolWaitHeightFailure(height uint64, notReached map[string]uint64, reached map[string]uint64, notConnected []*health.NodeInfo) {
 	if n.canAlert(n.lastSyncAlertTime) {
-		msg, err := HeightAlertString(height, notReached)
-		if err != nil {
-			log.Printf("Error creating height alert message: %v", err)
-			return
-		}
-
+		msg := HeightAlertMsg(height, notReached, reached, notConnected)
 		if err := n.SendAlert(msg, &n.lastSyncAlertTime); err != nil {
 			log.Printf("Error sending alert on pool wait height failure: %v", err)
 			return
@@ -181,12 +182,7 @@ func (n *Notifier) AlertOnPoolWaitHeightFailure(height uint64, notReached map[st
 
 func (n *Notifier) AlertOnInconsistentHashes(height uint64, hashes map[string]sdk.Hash) {
 	if n.canAlert(n.lastHashAlertTime) {
-		msg, err := HashAlertString(height, hashes)
-		if err != nil {
-			log.Printf("Error creating hash alert message: %v", err)
-			return
-		}
-
+		msg := HashAlertMsg(height, hashes)
 		if err := n.SendAlert(msg, &n.lastHashAlertTime); err != nil {
 			log.Printf("Error sending alert on inconsistent block hashes: %v", err)
 			return
@@ -194,53 +190,64 @@ func (n *Notifier) AlertOnInconsistentHashes(height uint64, hashes map[string]sd
 	}
 }
 
-func HeightAlertString(height uint64, notReached map[string]uint64) (string, error) {
-	tmplFile := "height-alert.html"
-	tmpl, err := template.ParseFiles(tmplFile)
-	if err != nil {
-		return "", fmt.Errorf("error parsing template from '%s': %v", tmplFile, err)
-	}
-
+func HeightAlertMsg(height uint64, notReached map[string]uint64, reached map[string]uint64, notConnected []*health.NodeInfo) string {
 	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, struct {
-		Height     uint64
-		NotReached map[string]uint64
-	}{
-		height,
-		notReached,
-	})
-	if err != nil {
-		return "", fmt.Errorf("error execute template: %v", err)
+
+	fmt.Fprintf(&buf, "<b>⚠️ Fork Alert </b>\n\n")
+	fmt.Fprintf(&buf, "Expected network height:  <b>%d</b>", height)
+
+	if len(notReached) != 0 {
+		fmt.Fprintf(&buf, "\n\nOut-of-sync:")
+		fmt.Fprintf(&buf, "<pre>")
+		for node, height := range notReached {
+			fmt.Fprintf(&buf, "%-35v %-8v\n", node, height)
+		}
+		fmt.Fprintf(&buf, "</pre>")
 	}
 
-	return buf.String(), nil
+	if len(reached) != 0 {
+		fmt.Fprintf(&buf, "\n\nSynced:")
+		fmt.Fprintf(&buf, "<pre>")
+		for node, height := range reached {
+			fmt.Fprintf(&buf, "%-35v %-8v\n", node, height)
+		}
+		fmt.Fprintf(&buf, "</pre>")
+	}
+
+	if len(notConnected) != 0 {
+		fmt.Fprintf(&buf, "\n\nFailed connections:")
+		fmt.Fprintf(&buf, "<pre>")
+		for _, node := range notConnected {
+			fmt.Fprintf(&buf, "%s\n", strings.TrimSpace(node.Endpoint))
+		}
+		fmt.Fprintf(&buf, "</pre>")
+	}
+
+	return buf.String()
 }
 
-func HashAlertString(height uint64, hashes map[string]sdk.Hash) (string, error) {
+func HashAlertMsg(height uint64, hashes map[string]sdk.Hash) string {
 	hashesGroup := make(map[sdk.Hash][]string)
 	for endpoint, hash := range hashes {
 		hashesGroup[hash] = append(hashesGroup[hash], endpoint)
 	}
 
-	tmplFile := "hash-alert.html"
-	tmpl, err := template.ParseFiles(tmplFile)
-	if err != nil {
-		return "", fmt.Errorf("error parsing template from '%s': %v", tmplFile, err)
-	}
-
 	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, struct {
-		Height      uint64
-		HashesGroup map[sdk.Hash][]string
-	}{
-		height,
-		hashesGroup,
-	})
-	if err != nil {
-		return "", fmt.Errorf("error execute template: %v", err)
-	}
 
-	return buf.String(), nil
+	fmt.Fprintf(&buf, "<b>❗Fork Alert </b>\n\n")
+	fmt.Fprintf(&buf, "Inconsistent block hash at height:  <b>%d</b>\n", height)
+
+	fmt.Fprintf(&buf, "<pre>")
+	for hash, endpoints := range hashesGroup {
+		fmt.Fprintf(&buf, "%s:\n\n", hash)
+		for _, endpoint := range endpoints {
+			fmt.Fprintln(&buf, endpoint)
+		}
+		fmt.Fprintf(&buf, "\n\n")
+	}
+	fmt.Fprintf(&buf, "</pre>")
+
+	return buf.String()
 }
 
 func NewForkChecker(config Config) (*ForkChecker, error) {
@@ -297,7 +304,7 @@ func (f *ForkChecker) initNotifier() error {
 	f.notifier = &Notifier{
 		bot,
 		f.cfg.ChatID,
-		time.Duration(f.cfg.AlarmInterval) * time.Hour,
+		time.Duration(f.cfg.AlarmInterval) * AlarmInterval,
 		time.Time{},
 		time.Time{},
 		f.cfg.Notify,
@@ -317,18 +324,21 @@ func (f *ForkChecker) initPool() error {
 		return fmt.Errorf("error parsing node info: %v", err)
 	}
 
-	healthCheckerPool, err := health.NewNodeHealthCheckerPool(
+	healthCheckerPool := health.NewNodeHealthCheckerPool(
 		clientKeyPair,
-		nodeInfos,
 		packets.NoneConnectionSecurity,
-		f.cfg.Discover,
 		math.MaxInt,
 	)
+
+	failedConnectionsNodes, err := healthCheckerPool.ConnectToNodes(nodeInfos, f.cfg.Discover)
 	if err != nil {
 		return err
 	}
 
+	f.executionTime = time.Now()
+	f.nodeInfos = nodeInfos
 	f.nodePool = healthCheckerPool
+	f.failedConnectionsNodes = failedConnectionsNodes
 	return nil
 }
 
@@ -362,31 +372,41 @@ func (f *ForkChecker) initCheckpoint() error {
 	return nil
 }
 
-func (f *ForkChecker) Start() {
-	f.executionTime = time.Now()
+func (f *ForkChecker) Start() error {
+	var err error
 
 	for {
-		log.Println("Checkpoint:", f.checkpoint)
+		// Periodically discovers new peers in the network
+		if time.Since(f.executionTime) >= PeersDiscoveryInterval {
+			f.failedConnectionsNodes, err = f.nodePool.ConnectToNodes(f.nodeInfos, f.cfg.Discover)
+			f.executionTime = time.Now()
+		} else if len(f.failedConnectionsNodes) != 0 {
+			f.failedConnectionsNodes, err = f.nodePool.ConnectToNodes(f.nodeInfos, false)
+		}
+
+		if err != nil {
+			return fmt.Errorf("error connecting to nodes: %w", err)
+		}
+		log.Println("Failed connections nodes:", f.failedConnectionsNodes)
 
 		// Wait for nodes to reach checkpoint height
-		notReached := f.nodePool.WaitHeight(f.checkpoint)
-		if len(notReached) != 0 {
-			f.notifier.AlertOnPoolWaitHeightFailure(f.checkpoint, notReached)
+		log.Println("Checkpoint:", f.checkpoint)
+		notReached, reached, err := f.nodePool.WaitHeight(f.checkpoint)
+		if err != nil {
+			return fmt.Errorf("error waiting for nodes to reach height %d: %w", f.checkpoint, err)
+		} else if len(notReached) != 0 || len(f.failedConnectionsNodes) != 0 {
+			f.notifier.AlertOnPoolWaitHeightFailure(f.checkpoint, notReached, reached, f.failedConnectionsNodes)
 		}
 
 		// Check the block hash of last confirmed block
 		lastConfirmedBlockHeight := f.checkpoint - f.RollbackDurationFromNetworkConfig()
 		log.Printf("Checking block hash at %d height", lastConfirmedBlockHeight)
 
-		success, hashes := f.nodePool.CheckHashes(lastConfirmedBlockHeight)
-		if !success {
+		success, hashes, err := f.nodePool.CheckHashes(lastConfirmedBlockHeight)
+		if err != nil {
+			return fmt.Errorf("error checking hashes at height %d: %w", lastConfirmedBlockHeight, err)
+		} else if !success {
 			f.notifier.AlertOnInconsistentHashes(lastConfirmedBlockHeight, hashes)
-		}
-
-		// Periodically discover new peers in the network
-		if f.cfg.Discover && time.Since(f.executionTime) >= PeersDiscoveryInterval {
-			f.nodePool.CollectConnectedNodes()
-			f.executionTime = time.Now()
 		}
 
 		// Update checkpoint and sleep until the next checkpoint

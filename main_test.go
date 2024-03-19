@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/proximax-storage/go-xpx-chain-sdk/sdk"
+	"github.com/proximax-storage/go-xpx-chain-sdk/tools/health"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -137,20 +138,35 @@ func TestCreateHashAlertStringFromTemplate(t *testing.T) {
 		"444": *hash1,
 		"555": *hash1,
 	}
-	htmlContent, err := HashAlertString(height, hashes)
-	assert.NoError(t, err, err)
+	htmlContent := HashAlertMsg(height, hashes)
 	assert.NotNil(t, htmlContent)
 	fmt.Println(htmlContent)
 }
 
 func TestCreateHeightAlertStringFromTemplate(t *testing.T) {
-	height := uint64(789)
-	hashes := map[string]uint64{
+	height := uint64(25000)
+	notReached := map[string]uint64{
 		"DA6B8ECFEBDDAA49CA26DEB8AC2F6346DBC9C8DD96B4584A01410190DAB4A45A": 10000,
 		"4F7A80E9D6C2A4F5B46B90A1D16E95D4C1B8A3E8D5D1479D7C802C475D70A2EE": 12000,
 	}
-	htmlContent, err := HeightAlertString(height, hashes)
-	assert.NoError(t, err, err)
+
+	reached := map[string]uint64{
+		"DA6B8ECFEBDDAA49CA26DEB8AC2F6346DBC9C8DD96B4584A01410190DAB4A45A": 25000,
+		"4F7A80E9D6C2A4F5B46B90A1D16E95D4C1B8A3E8D5D1479D7C802C475D70A2EE": 25000,
+	}
+
+	notConnected := []*health.NodeInfo{
+		{
+			IdentityKey: nil,
+			Endpoint: "127.0.0.1:7900",
+		},
+		{
+			IdentityKey: nil,
+			Endpoint: "127.0.0.1:7904",
+		},
+	}
+
+	htmlContent := HeightAlertMsg(height, notReached, reached, notConnected)
 	assert.NotNil(t, htmlContent)
 	fmt.Println(htmlContent)
 }
