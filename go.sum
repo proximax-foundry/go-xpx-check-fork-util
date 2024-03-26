@@ -25,6 +25,8 @@ github.com/proximax-storage/go-xpx-chain-sdk v0.7.5-0.20240311162818-27ca682760d
 github.com/proximax-storage/go-xpx-chain-sdk v0.7.5-0.20240311162818-27ca682760d0/go.mod h1:kt+k1m8BPr4BYI4oOp8C+gfmy2SRkTIzk594j2XX1us=
 github.com/proximax-storage/go-xpx-chain-sdk v0.7.5-0.20240319062149-b049dc4f0ca7 h1:PJUlDC0gSdEMkVp2cWSPgP6fI4id46+AHjyI1ouGStY=
 github.com/proximax-storage/go-xpx-chain-sdk v0.7.5-0.20240319062149-b049dc4f0ca7/go.mod h1:kt+k1m8BPr4BYI4oOp8C+gfmy2SRkTIzk594j2XX1us=
+github.com/proximax-storage/go-xpx-chain-sdk v0.7.5-0.20240326092710-5fb46bd2e312 h1:YSqEbc+7OI8uW5jEloK9L42nIkkQfMg1XDagX/5bXKE=
+github.com/proximax-storage/go-xpx-chain-sdk v0.7.5-0.20240326092710-5fb46bd2e312/go.mod h1:kt+k1m8BPr4BYI4oOp8C+gfmy2SRkTIzk594j2XX1us=
 github.com/proximax-storage/go-xpx-chain-sync v1.1.2/go.mod h1:I4k4aJ+XQe+4ev0cZEbwGi6zetWhpRn3QB2SUSl2wIY=
 github.com/proximax-storage/go-xpx-crypto v0.0.0-20191023142918-e02e2652d78e/go.mod h1:gYfWQWh8qBihxxPhZeYrvLWC21RG+Dmv4FgHpFfpAzs=
 github.com/proximax-storage/go-xpx-crypto v0.1.0 h1:ifeGdrYJrpu/kZzdpSrnZVFhWZFFrnMi9mdTeuWRXgc=
