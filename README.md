@@ -1,61 +1,71 @@
 # go-xpx-check-fork-util
 
-The check fork util script is a tool to detect forked chain by comparing block hashes of provided api nodes at a certain height. The script will repeat at a given time interval and notify any fork detected though a telegram bot notification.
+The check fork util script is a tool to detect forked chain by comparing block hashes at a certain height among the provided api nodes, peer nodes, and their connected nodes. The script runs at regular intervals and sends notifications through a Telegram bot when it detects any forks. 
+
+Notifications are triggered in the following scenarios:
+- When it identifies an inconsistent block hash on the last confirmed block, indicating a fork has occurred.
+- When it detects nodes that are out of sync, potentially leading to a fork.
+
+<br/>
 
 ## Getting started
 ### Prerequisites
 * [Golang](https://golang.org/
-) is required (tested on Go 1.17)
-* [Telegram Bots API](https://core.telegram.org/bots
-) Key and Chat Id 
+) is required (tested on Go 1.20)
+* [Telegram Bots](https://core.telegram.org/bots
+) API Key and Chat Id 
 
-### Clone the repository:
-```
-go get github.com/proximax-foundry/go-xpx-check-fork-util
-cd go-xpx-check-fork-util
-```
+<br/>
 
 ## Configurations
 
-Multiple configurations to the script can be done by making changes to variables in the [config.json](./config.json) file.
+Configurations can be made to the script by changing the values to the fields in config.json.
 
-structure of configuration file:
 ```json
 {
-  "notif": false,
-  "apiNodes": [ 
-    "https://arcturus.xpxsirius.io",
-    "https://aldebaran.xpxsirius.io",
-    "https://bigcalvin.xpxsirius.io",
-    "https://betelgeuse.xpxsirius.io",
-    "https://lyrasithara.xpxsirius.io",
-    "https://delphinus.xpxsirius.io"
-  ],
-  "sleepInterval": 60,
-  "alarmInterval": 1,
-  "pruneHeight": 360,
-  "botApiKey": "<TELEGRAM_BOT_API_KEY>",
-  "chatID": <TELEGRAM_CHAT_ID>
+    "nodes": [
+        {
+            "endpoint": "localhost:7900",
+            "IdentityKey": "4F7A80E9D6C2A4F5B46B90A1D16E95D4C1B8A3E8D5D1479D7C802C475D70A2E"
+        },
+        {
+            "endpoint": "localhost:7901",
+            "IdentityKey": "DA6B8ECFEBDDAA49CA26DEB8AC2F6346DBC9C8DD96B4584A01410190DAB4A45A"
+        }     
+    ],
+    "apiUrls": [
+        "https://localhost:3000",
+        "https://localhost:3001"
+    ],
+    "discover": true,
+    "heightCheckInterval": 5,
+    "alarmInterval": 1,
+    "botApiKey": "<TELEGRAM_BOT_API_KEY>",
+    "chatID": 1234567,
+    "notify": true
 }
 ```
 
-* `notif`: Option to enable telegram notifications (`false` by default)
-* `apiNodes`: List of api nodes to be compared
-* `sleepInterval`: The time interval (in seconds) where the script will perform block hash comparisons 
-* `alarmInterval`: The time interval (in hours) where telegram bot will send notification where a fork is detected 
-* `pruneHeight`: The block height interval of last confirmed block.
-* `botApiKey`: Telegram Bot Api Key
-* `chatID`: Telegram Chat Id where notifications will be received.
+* `nodes`: List of nodes (API and PEER) to compare block hashes.
+    * `Endpoint`: Node's host and port.
+    * `IdentityKey` Node's public key.
+* `apiUrls`: URLs of the REST servers.
+* `discover`: Option to enable or disable peer discovery.
+* `heightCheckInterval`: Number of blocks between each block hash check.
+* `alarmInterval`: Time interval (*in hours*) the telegram bot will send notification if a fork is detected.
+* `botApiKey`: Telegram bot's API key.
+* `chatID`: Telegram chat ID where notifications will be received.
+* `notify`: Option to enable or disable telegram notification (`false` by default).
+  
+<br/>
 
-## Selecting configuration file
-The script will use [config.json](./config.json) as the default configuration, other configuration files can be selected using the `-file` flag.
+## Usage
+```bash
+go build -o check-fork-util
 
-**Example:**
-```go
-go run main.go -file "config.json"
-```
+# Running with default configuration file: "config.json"
+./check-fork-util
 
-## Running the script
-```go
-go run main.go
+# Running with specific configuration file using the `-file` flag
+./check-fork-util -file "specific-config.json"
 ```

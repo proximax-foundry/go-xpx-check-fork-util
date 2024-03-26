@@ -1,0 +1,22 @@
+{
+    "nodes": [
+        {
+            "endpoint": "localhost:7900",
+            "IdentityKey": "4F7A80E9D6C2A4F5B46B90A1D16E95D4C1B8A3E8D5D1479D7C802C475D70A2E"
+        },
+        {
+            "endpoint": "localhost:7901",
+            "IdentityKey": "DA6B8ECFEBDDAA49CA26DEB8AC2F6346DBC9C8DD96B4584A01410190DAB4A45A"
+        }     
+    ],
+    "apiUrls": [
+        "https://localhost:3000",
+        "https://localhost:3001"
+    ],
+    "discover": true,
+    "heightCheckInterval": 1,
+    "alarmInterval": 1,
+    "botApiKey": "<TELEGRAM_BOT_API_KEY>",
+    "chatID": 1234567,
+    "notify": true
+}
