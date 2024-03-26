@@ -32,6 +32,7 @@ type (
 		Nodes               Nodes    `json:"nodes"`
 		ApiUrls             []string `json:"apiUrls"`
 		Discover            bool     `json:"discover"`
+		Checkpoint          uint64   `json:"checkpoint"`
 		HeightCheckInterval uint64   `json:"heightCheckInterval"`
 		AlarmInterval       uint64   `json:"alarmInterval"`
 		BotAPIKey           string   `json:"botApiKey"`
@@ -362,13 +363,19 @@ func (f *ForkChecker) RollbackDurationFromNetworkConfig() uint64 {
 }
 
 func (f *ForkChecker) initCheckpoint() error {
-	height, err := f.catapultClient.Blockchain.GetBlockchainHeight(context.Background())
-	if err != nil {
-		return fmt.Errorf("error getting blockchain height: %v", err)
+	if f.cfg.Checkpoint != 0 {
+		f.checkpoint = f.cfg.Checkpoint
+	} else {
+		height, err := f.catapultClient.Blockchain.GetBlockchainHeight(context.Background())
+		if err != nil {
+			return fmt.Errorf("error getting blockchain height: %v", err)
+		}
+
+		f.checkpoint = uint64(height)
 	}
 
-	f.checkpoint = uint64(height)
-
+	log.Println("Initialized checkpoint: ", f.checkpoint)
+	
 	return nil
 }
 
@@ -399,7 +406,8 @@ func (f *ForkChecker) Start() error {
 		}
 
 		// Check the block hash of last confirmed block
-		lastConfirmedBlockHeight := f.checkpoint - f.RollbackDurationFromNetworkConfig()
+		// lastConfirmedBlockHeight := f.checkpoint - f.RollbackDurationFromNetworkConfig()
+		lastConfirmedBlockHeight := f.checkpoint
 		log.Printf("Checking block hash at %d height", lastConfirmedBlockHeight)
 
 		success, hashes, err := f.nodePool.CheckHashes(lastConfirmedBlockHeight)
@@ -411,6 +419,6 @@ func (f *ForkChecker) Start() error {
 
 		// Update checkpoint and sleep until the next checkpoint
 		f.checkpoint += f.cfg.HeightCheckInterval
-		time.Sleep(health.AvgSecondsPerBlock * time.Duration(f.cfg.HeightCheckInterval))
+		// time.Sleep(health.AvgSecondsPerBlock * time.Duration(f.cfg.HeightCheckInterval))
 	}
 }

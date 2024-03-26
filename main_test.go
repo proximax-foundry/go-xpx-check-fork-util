@@ -24,6 +24,7 @@ var (
 			"https://arcturus.xpxsirius.io"
 		],
 		"discover": true,
+		"checkpoint": 0,
 		"heightCheckInterval": 5,
 		"alarmInterval": 1,
 		"botApiKey": "7108251290:AAHYAp0fi7leBHAD9Xtna8ay2Zm48Y5zZh0",

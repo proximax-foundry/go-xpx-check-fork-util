@@ -38,6 +38,7 @@ Configurations can be made to the script by changing the values to the fields in
         "https://localhost:3001"
     ],
     "discover": true,
+    "checkpoint": 0,
     "heightCheckInterval": 5,
     "alarmInterval": 1,
     "botApiKey": "<TELEGRAM_BOT_API_KEY>",
@@ -51,6 +52,7 @@ Configurations can be made to the script by changing the values to the fields in
     * `IdentityKey` Node's public key.
 * `apiUrls`: URLs of the REST servers.
 * `discover`: Option to enable or disable peer discovery.
+* `checkpoint`:  Specifies the initial chain height for conducting health checks. When set to 0, the script sets this checkpoint based on the current chain height obtained from the REST server.
 * `heightCheckInterval`: Number of blocks between each block hash check.
 * `alarmInterval`: Time interval (*in hours*) the telegram bot will send notification if a fork is detected.
 * `botApiKey`: Telegram bot's API key.
