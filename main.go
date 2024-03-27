@@ -180,13 +180,13 @@ func (n *Notifier) AlertOnPoolWaitHeightFailure(height uint64, notReached map[st
 }
 
 func (n *Notifier) AlertOnInconsistentHashes(height uint64, hashes map[string]sdk.Hash) {
-	if n.canAlert(n.lastHashAlertTime) {
+	// if n.canAlert(n.lastHashAlertTime) {
 		msg := HashAlertMsg(height, hashes)
 		if err := n.SendAlert(msg, &n.lastHashAlertTime); err != nil {
 			log.Printf("Error sending alert on inconsistent block hashes: %v", err)
 			return
 		}
-	}
+	// }
 }
 
 func HeightAlertMsg(height uint64, notReached map[string]uint64, reached map[string]uint64, notConnected []*health.NodeInfo) string {
@@ -354,7 +354,7 @@ func (f *ForkChecker) initCheckpoint() error {
 	}
 
 	log.Println("Initialized checkpoint: ", f.checkpoint)
-	
+
 	return nil
 }
 
