@@ -10,7 +10,6 @@ import (
 	"log"
 	"math"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -69,7 +68,6 @@ var (
 )
 
 const (
-	DefaultRollbackBlocks  = uint64(360)
 	PeersDiscoveryInterval = time.Hour
 	AlarmInterval          = time.Hour
 )
@@ -343,25 +341,6 @@ func (f *ForkChecker) initPool() error {
 	return nil
 }
 
-func (f *ForkChecker) RollbackDurationFromNetworkConfig() uint64 {
-	config, err := f.catapultClient.Network.GetNetworkConfigAtHeight(context.Background(), sdk.Height(f.checkpoint))
-	if err != nil {
-		return DefaultRollbackBlocks
-	}
-
-	val, ok := config.NetworkConfig.Sections["chain"].Fields["maxRollbackBlocks"]
-	if !ok {
-		return DefaultRollbackBlocks
-	}
-
-	i, err := strconv.ParseUint(val.Value, 10, 64)
-	if err != nil {
-		return DefaultRollbackBlocks
-	}
-
-	return i
-}
-
 func (f *ForkChecker) initCheckpoint() error {
 	if f.cfg.Checkpoint != 0 {
 		f.checkpoint = f.cfg.Checkpoint
@@ -406,7 +385,6 @@ func (f *ForkChecker) Start() error {
 		}
 
 		// Check the block hash of last confirmed block
-		// lastConfirmedBlockHeight := f.checkpoint - f.RollbackDurationFromNetworkConfig()
 		lastConfirmedBlockHeight := f.checkpoint
 		log.Printf("Checking block hash at %d height", lastConfirmedBlockHeight)
 
@@ -419,6 +397,6 @@ func (f *ForkChecker) Start() error {
 
 		// Update checkpoint and sleep until the next checkpoint
 		f.checkpoint += f.cfg.HeightCheckInterval
-		// time.Sleep(health.AvgSecondsPerBlock * time.Duration(f.cfg.HeightCheckInterval))
+		time.Sleep(health.AvgSecondsPerBlock * time.Duration(f.cfg.HeightCheckInterval))
 	}
 }

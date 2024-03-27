@@ -218,23 +218,3 @@ func TestInitPool_EnableDiscover(t *testing.T) {
 	assert.NoError(t, err, err)
 	assert.NotNil(t, f.nodePool)
 }
-
-func TestRollbackDurationFromNetworkConfig(t *testing.T) {
-	f := setupForkCheckerConfig()
-	err := f.initClient()
-	assert.NoError(t, err)
-
-	err = f.initCheckpoint()
-	assert.NoError(t, err)
-
-	rollbackDuration := f.RollbackDurationFromNetworkConfig()
-	assert.NotNil(t, rollbackDuration)
-	log.Printf("Checkpoint: %v, Rollback duration: %v\n", f.checkpoint, rollbackDuration)
-	
-	// test return default rollback duration if encounter errors
-	f.checkpoint = 0
-	rollbackDuration = f.RollbackDurationFromNetworkConfig()
-	assert.NotNil(t, rollbackDuration)
-	assert.Equal(t, DefaultRollbackBlocks, rollbackDuration)
-	log.Printf("Checkpoint: %v, Rollback duration: %v\n", f.checkpoint, rollbackDuration)
-}
