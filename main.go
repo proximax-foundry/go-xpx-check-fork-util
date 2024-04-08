@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -189,35 +191,77 @@ func (n *Notifier) AlertOnInconsistentHashes(height uint64, hashes map[string]sd
 	// }
 }
 
+func SortMapKeys(m map[string]uint64) []string {
+	var keys []string
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// Checks if the input is a DNS name and abbreviates it if so.
+func AbbreviateIfDNSName(address string) string {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+
+	if ip := net.ParseIP(host); ip != nil {
+		if port != "" {
+			return host + ":" + port
+		}
+		return host
+	}
+
+	parts := strings.Split(host, ".")
+	if len(parts) > 0 {
+		if port != "" {
+			return parts[0] + ":" + port
+		}
+		return parts[0]
+	}
+
+	return address
+}
+
 func HeightAlertMsg(height uint64, notReached map[string]uint64, reached map[string]uint64, notConnected []*health.NodeInfo) string {
 	var buf bytes.Buffer
+	totalNodes := len(reached) + len(notReached) + len(notConnected)
 
 	fmt.Fprintf(&buf, "<b>⚠️ Fork Alert </b>\n\n")
-	fmt.Fprintf(&buf, "Expected network height:  <b>%d</b>", height)
+	fmt.Fprintf(&buf, "Expected network height:  <b>%d</b>\n", height)
+	fmt.Fprintf(&buf, "Total nodes:  <b>%d</b>", totalNodes)
 
 	if len(notReached) != 0 {
-		fmt.Fprintf(&buf, "\n\nOut-of-sync:")
+		sortedNotReached := SortMapKeys(notReached)
+
+		fmt.Fprintf(&buf, "\n\nOut-of-sync  (%d):", len(notReached))
 		fmt.Fprintf(&buf, "<pre>")
-		for node, height := range notReached {
-			fmt.Fprintf(&buf, "%-35v %-8v\n", node, height)
+		for _, node := range sortedNotReached {
+			abbreviatedNode := AbbreviateIfDNSName(node)
+			buf.WriteString(fmt.Sprintf("%-20s %-7d\n", abbreviatedNode, notReached[node]))
 		}
 		fmt.Fprintf(&buf, "</pre>")
 	}
 
 	if len(reached) != 0 {
-		fmt.Fprintf(&buf, "\n\nSynced:")
+		sortedReached := SortMapKeys(reached)
+
+		fmt.Fprintf(&buf, "\n\nSynced  (%d):", len(reached))
 		fmt.Fprintf(&buf, "<pre>")
-		for node, height := range reached {
-			fmt.Fprintf(&buf, "%-35v %-8v\n", node, height)
+		for _, node := range sortedReached {
+			abbreviatedNode := AbbreviateIfDNSName(node)
+			buf.WriteString(fmt.Sprintf("%-24s %-7d\n", abbreviatedNode, reached[node]))
 		}
 		fmt.Fprintf(&buf, "</pre>")
 	}
 
 	if len(notConnected) != 0 {
-		fmt.Fprintf(&buf, "\n\nFailed connections:")
+		fmt.Fprintf(&buf, "\n\nFailed connections  (%d):", len(notConnected))
 		fmt.Fprintf(&buf, "<pre>")
 		for _, node := range notConnected {
-			fmt.Fprintf(&buf, "%s\n", strings.TrimSpace(node.Endpoint))
+			fmt.Fprintf(&buf, "%-24s\n", strings.TrimSpace(node.Endpoint))
 		}
 		fmt.Fprintf(&buf, "</pre>")
 	}
@@ -234,11 +278,12 @@ func HashAlertMsg(height uint64, hashes map[string]sdk.Hash) string {
 	var buf bytes.Buffer
 
 	fmt.Fprintf(&buf, "<b>❗Fork Alert </b>\n\n")
-	fmt.Fprintf(&buf, "Inconsistent block hash at height:  <b>%d</b>\n", height)
+	fmt.Fprintf(&buf, "Inconsistent block hash:  <b>%d</b>\n", height)
 
 	fmt.Fprintf(&buf, "<pre>")
 	for hash, endpoints := range hashesGroup {
 		fmt.Fprintf(&buf, "%s:\n\n", hash)
+		sort.Strings(endpoints)
 		for _, endpoint := range endpoints {
 			fmt.Fprintln(&buf, endpoint)
 		}
@@ -366,7 +411,7 @@ func (f *ForkChecker) Start() error {
 		if time.Since(f.executionTime) >= PeersDiscoveryInterval {
 			f.failedConnectionsNodes, err = f.nodePool.ConnectToNodes(f.nodeInfos, f.cfg.Discover)
 			f.executionTime = time.Now()
-		} else if len(f.failedConnectionsNodes) != 0 {
+		} else {
 			f.failedConnectionsNodes, err = f.nodePool.ConnectToNodes(f.nodeInfos, false)
 		}
 
@@ -397,6 +442,6 @@ func (f *ForkChecker) Start() error {
 
 		// Update checkpoint and sleep until the next checkpoint
 		f.checkpoint += f.cfg.HeightCheckInterval
-		time.Sleep(health.AvgSecondsPerBlock * time.Duration(f.cfg.HeightCheckInterval))
+		// time.Sleep(health.AvgSecondsPerBlock * time.Duration(f.cfg.HeightCheckInterval))
 	}
 }
