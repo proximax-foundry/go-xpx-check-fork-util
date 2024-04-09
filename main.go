@@ -57,7 +57,8 @@ type (
 		nodeInfos              []*health.NodeInfo
 		nodePool               *health.NodeHealthCheckerPool
 		failedConnectionsNodes []*health.NodeInfo
-		executionTime          time.Time
+		lastPeerDiscoveryTime  time.Time
+		lastNodeConnectionTime time.Time
 		checkpoint             uint64
 	}
 )
@@ -70,8 +71,9 @@ var (
 )
 
 const (
-	PeersDiscoveryInterval = time.Hour
 	AlarmInterval          = time.Hour
+	PeersDiscoveryInterval = time.Hour
+	TenMinuteInterval      = 10 * time.Minute
 )
 
 func main() {
@@ -379,7 +381,8 @@ func (f *ForkChecker) initPool() error {
 		return err
 	}
 
-	f.executionTime = time.Now()
+	f.lastPeerDiscoveryTime = time.Now()
+	f.lastNodeConnectionTime = time.Now()
 	f.nodeInfos = nodeInfos
 	f.nodePool = healthCheckerPool
 	f.failedConnectionsNodes = failedConnectionsNodes
@@ -408,11 +411,18 @@ func (f *ForkChecker) Start() error {
 
 	for {
 		// Periodically discovers new peers in the network
-		if time.Since(f.executionTime) >= PeersDiscoveryInterval {
+		if time.Since(f.lastPeerDiscoveryTime) >= PeersDiscoveryInterval {
+			log.Printf("Discover peers in the network.")
 			f.failedConnectionsNodes, err = f.nodePool.ConnectToNodes(f.nodeInfos, f.cfg.Discover)
-			f.executionTime = time.Now()
-		} else {
+			f.lastPeerDiscoveryTime = time.Now()
+			f.lastNodeConnectionTime = f.lastPeerDiscoveryTime
+		}
+
+		// Connect to must-connect nodes every 10 minutes
+		if time.Since(f.lastNodeConnectionTime) >= TenMinuteInterval && f.lastNodeConnectionTime != f.lastPeerDiscoveryTime {
+			log.Printf("Connect to must-connect nodes.")
 			f.failedConnectionsNodes, err = f.nodePool.ConnectToNodes(f.nodeInfos, false)
+			f.lastNodeConnectionTime = time.Now()
 		}
 
 		if err != nil {
@@ -425,7 +435,7 @@ func (f *ForkChecker) Start() error {
 		notReached, reached, err := f.nodePool.WaitHeight(f.checkpoint)
 		if err != nil {
 			return fmt.Errorf("error waiting for nodes to reach height %d: %w", f.checkpoint, err)
-		} else if len(notReached) != 0 || len(f.failedConnectionsNodes) != 0 {
+		} else if len(notReached) != 0 || len(f.failedConnectionsNodes) > 1 {
 			f.notifier.AlertOnPoolWaitHeightFailure(f.checkpoint, notReached, reached, f.failedConnectionsNodes)
 		}
 
