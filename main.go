@@ -173,8 +173,8 @@ func (n *Notifier) SendAlert(text string, alarmTime *time.Time) error {
 	return nil
 }
 
-func (n *Notifier) AlertOnPoolWaitHeightFailure(height uint64, notReached map[string]uint64, reached map[string]uint64, notConnected []*health.NodeInfo) {
-	if n.canAlert(n.lastSyncAlertTime) {
+func (n *Notifier) AlertOnPoolWaitHeightFailure(height uint64, notReached map[string]uint64, reached map[string]uint64, notConnected []*health.NodeInfo, immediate bool) {
+	if immediate || n.canAlert(n.lastSyncAlertTime) {
 		msg := HeightAlertMsg(height, notReached, reached, notConnected)
 		if err := n.SendAlert(msg, &n.lastSyncAlertTime); err != nil {
 			log.Printf("Error sending alert on pool wait height failure: %v", err)
@@ -183,14 +183,14 @@ func (n *Notifier) AlertOnPoolWaitHeightFailure(height uint64, notReached map[st
 	}
 }
 
-func (n *Notifier) AlertOnInconsistentHashes(height uint64, hashes map[string]sdk.Hash) {
-	// if n.canAlert(n.lastHashAlertTime) {
+func (n *Notifier) AlertOnInconsistentHashes(height uint64, hashes map[string]sdk.Hash, immediate bool) {
+	if immediate || n.canAlert(n.lastHashAlertTime) {
 		msg := HashAlertMsg(height, hashes)
 		if err := n.SendAlert(msg, &n.lastHashAlertTime); err != nil {
 			log.Printf("Error sending alert on inconsistent block hashes: %v", err)
 			return
 		}
-	// }
+	}
 }
 
 func SortMapKeys(m map[string]uint64) []string {
@@ -242,7 +242,7 @@ func HeightAlertMsg(height uint64, notReached map[string]uint64, reached map[str
 		fmt.Fprintf(&buf, "<pre>")
 		for _, node := range sortedNotReached {
 			abbreviatedNode := AbbreviateIfDNSName(node)
-			buf.WriteString(fmt.Sprintf("%-20s %-7d\n", abbreviatedNode, notReached[node]))
+			buf.WriteString(fmt.Sprintf("%-22s %-7d\n", abbreviatedNode, notReached[node]))
 		}
 		fmt.Fprintf(&buf, "</pre>")
 	}
@@ -263,7 +263,8 @@ func HeightAlertMsg(height uint64, notReached map[string]uint64, reached map[str
 		fmt.Fprintf(&buf, "\n\nFailed connections  (%d):", len(notConnected))
 		fmt.Fprintf(&buf, "<pre>")
 		for _, node := range notConnected {
-			fmt.Fprintf(&buf, "%-24s\n", strings.TrimSpace(node.Endpoint))
+			endpoint := AbbreviateIfDNSName(node.Endpoint)
+			fmt.Fprintf(&buf, "%-24s\n", strings.TrimSpace(endpoint))
 		}
 		fmt.Fprintf(&buf, "</pre>")
 	}
@@ -406,52 +407,86 @@ func (f *ForkChecker) initCheckpoint() error {
 	return nil
 }
 
+func (f *ForkChecker) discoverPeers() (err error) {
+	if time.Since(f.lastPeerDiscoveryTime) >= PeersDiscoveryInterval {
+		log.Printf("Discover peers in the network.")
+		f.failedConnectionsNodes, err = f.nodePool.ConnectToNodes(f.nodeInfos, f.cfg.Discover)
+		f.lastPeerDiscoveryTime = time.Now()
+		f.lastNodeConnectionTime = f.lastPeerDiscoveryTime
+		return err
+	}
+
+	return nil
+}
+
+func (f *ForkChecker) connectToMustConnectNodes() (err error) {
+	if time.Since(f.lastNodeConnectionTime) >= TenMinuteInterval && f.lastNodeConnectionTime != f.lastPeerDiscoveryTime {
+		log.Printf("Connect to must-connect nodes.")
+		f.failedConnectionsNodes, err = f.nodePool.ConnectToNodes(f.nodeInfos, false)
+		f.lastNodeConnectionTime = time.Now()
+		log.Println("Failed connections nodes:", f.failedConnectionsNodes)
+		return err
+	}
+
+	return nil
+}
+
+func (f *ForkChecker) ResetPeersDiscoveryTime() {
+	f.lastPeerDiscoveryTime = time.Time{}
+	time.Sleep(TenMinuteInterval)
+}
+
 func (f *ForkChecker) Start() error {
 	var err error
 
 	for {
 		// Periodically discovers new peers in the network
-		if time.Since(f.lastPeerDiscoveryTime) >= PeersDiscoveryInterval {
-			log.Printf("Discover peers in the network.")
-			f.failedConnectionsNodes, err = f.nodePool.ConnectToNodes(f.nodeInfos, f.cfg.Discover)
-			f.lastPeerDiscoveryTime = time.Now()
-			f.lastNodeConnectionTime = f.lastPeerDiscoveryTime
-		}
-
-		// Connect to must-connect nodes every 10 minutes
-		if time.Since(f.lastNodeConnectionTime) >= TenMinuteInterval && f.lastNodeConnectionTime != f.lastPeerDiscoveryTime {
-			log.Printf("Connect to must-connect nodes.")
-			f.failedConnectionsNodes, err = f.nodePool.ConnectToNodes(f.nodeInfos, false)
-			f.lastNodeConnectionTime = time.Now()
-		}
-
+		err = f.discoverPeers()
 		if err != nil {
 			return fmt.Errorf("error connecting to nodes: %w", err)
 		}
-		log.Println("Failed connections nodes:", f.failedConnectionsNodes)
+
+		// Connect to must-connect nodes
+		err = f.connectToMustConnectNodes()
+		if err != nil {
+			return fmt.Errorf("error connecting to nodes: %w", err)
+		}
 
 		// Wait for nodes to reach checkpoint height
-		log.Println("Checkpoint:", f.checkpoint)
+		log.Println("Checkpoint: ", f.checkpoint)
 		notReached, reached, err := f.nodePool.WaitHeight(f.checkpoint)
 		if err != nil {
-			return fmt.Errorf("error waiting for nodes to reach height %d: %w", f.checkpoint, err)
-		} else if len(notReached) != 0 || len(f.failedConnectionsNodes) > 1 {
-			f.notifier.AlertOnPoolWaitHeightFailure(f.checkpoint, notReached, reached, f.failedConnectionsNodes)
+			log.Printf("Error waiting for nodes to reach height %d: %s", f.checkpoint, err)
+			f.ResetPeersDiscoveryTime()
+			continue
+		}
+
+		if len(reached) == 0 {
+			log.Println("Blockchain stuck at height: ", f.checkpoint)
+			f.notifier.AlertOnPoolWaitHeightFailure(f.checkpoint, notReached, reached, f.failedConnectionsNodes, false)
+			f.ResetPeersDiscoveryTime()
+			continue
+		}
+
+		if len(notReached) != 0 || len(f.failedConnectionsNodes) != 0 {
+			f.notifier.AlertOnPoolWaitHeightFailure(f.checkpoint, notReached, reached, f.failedConnectionsNodes, false)
 		}
 
 		// Check the block hash of last confirmed block
-		lastConfirmedBlockHeight := f.checkpoint
-		log.Printf("Checking block hash at %d height", lastConfirmedBlockHeight)
+		log.Printf("Checking block hash at %d height", f.checkpoint)
 
-		success, hashes, err := f.nodePool.CheckHashes(lastConfirmedBlockHeight)
+		success, hashes, err := f.nodePool.CheckHashes(f.checkpoint)
 		if err != nil {
-			return fmt.Errorf("error checking hashes at height %d: %w", lastConfirmedBlockHeight, err)
-		} else if !success {
-			f.notifier.AlertOnInconsistentHashes(lastConfirmedBlockHeight, hashes)
+			log.Printf("Error checking hashes at height %d: %s", f.checkpoint, err)
+			f.ResetPeersDiscoveryTime()
+			continue
 		}
 
-		// Update checkpoint and sleep until the next checkpoint
+		if !success {
+			f.notifier.AlertOnInconsistentHashes(f.checkpoint, hashes, true)
+		}
+
+		// Update checkpoint
 		f.checkpoint += f.cfg.HeightCheckInterval
-		// time.Sleep(health.AvgSecondsPerBlock * time.Duration(f.cfg.HeightCheckInterval))
 	}
 }
