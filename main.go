@@ -383,7 +383,7 @@ func (f *ForkChecker) initPool() error {
 	}
 
 	f.lastPeerDiscoveryTime = time.Now()
-	f.lastNodeConnectionTime = time.Now()
+	f.lastNodeConnectionTime = f.lastPeerDiscoveryTime
 	f.nodeInfos = nodeInfos
 	f.nodePool = healthCheckerPool
 	f.failedConnectionsNodes = failedConnectionsNodes
@@ -420,7 +420,7 @@ func (f *ForkChecker) discoverPeers() (err error) {
 }
 
 func (f *ForkChecker) connectToMustConnectNodes() (err error) {
-	if time.Since(f.lastNodeConnectionTime) >= TenMinuteInterval && f.lastNodeConnectionTime != f.lastPeerDiscoveryTime {
+	if time.Since(f.lastNodeConnectionTime) >= TenMinuteInterval {
 		log.Printf("Connect to must-connect nodes.")
 		f.failedConnectionsNodes, err = f.nodePool.ConnectToNodes(f.nodeInfos, false)
 		f.lastNodeConnectionTime = time.Now()
@@ -433,7 +433,7 @@ func (f *ForkChecker) connectToMustConnectNodes() (err error) {
 
 func (f *ForkChecker) ResetPeersDiscoveryTime() {
 	f.lastPeerDiscoveryTime = time.Time{}
-	time.Sleep(TenMinuteInterval)
+	time.Sleep(TenMinuteInterval / 2)
 }
 
 func (f *ForkChecker) Start() error {
