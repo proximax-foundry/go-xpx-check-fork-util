@@ -231,7 +231,7 @@ func HeightAlertMsg(height uint64, notReached map[string]uint64, reached map[str
 	var buf bytes.Buffer
 	totalNodes := len(reached) + len(notReached) + len(notConnected)
 
-	fmt.Fprintf(&buf, "<b>⚠️ Fork Alert </b>\n\n")
+	fmt.Fprintf(&buf, "<b> Alert </b>\n\n")
 	fmt.Fprintf(&buf, "Expected network height:  <b>%d</b>\n", height)
 	fmt.Fprintf(&buf, "Total nodes:  <b>%d</b>", totalNodes)
 
@@ -280,7 +280,7 @@ func HashAlertMsg(height uint64, hashes map[string]sdk.Hash) string {
 
 	var buf bytes.Buffer
 
-	fmt.Fprintf(&buf, "<b>❗Fork Alert </b>\n\n")
+	fmt.Fprintf(&buf, "<b> Alert </b>\n\n")
 	fmt.Fprintf(&buf, "Inconsistent block hash:  <b>%d</b>\n", height)
 
 	fmt.Fprintf(&buf, "<pre>")
