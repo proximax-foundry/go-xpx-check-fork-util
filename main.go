@@ -232,7 +232,7 @@ func HeightAlertMsg(height uint64, notReached map[string]uint64, reached map[str
 	totalNodes := len(reached) + len(notReached) + len(notConnected)
 
 	fmt.Fprintf(&buf, "<b> Alert </b>\n\n")
-	fmt.Fprintf(&buf, "Expected network height:  <b>%d</b>\n", height)
+	// fmt.Fprintf(&buf, "Expected network height:  <b>%d</b>\n", height)
 	fmt.Fprintf(&buf, "Total nodes:  <b>%d</b>", totalNodes)
 
 	if len(notReached) != 0 {
@@ -280,7 +280,7 @@ func HashAlertMsg(height uint64, hashes map[string]sdk.Hash) string {
 
 	var buf bytes.Buffer
 
-	fmt.Fprintf(&buf, "<b> Alert </b>\n\n")
+	fmt.Fprintf(&buf, "<b>❗Fork Alert </b>\n\n")
 	fmt.Fprintf(&buf, "Inconsistent block hash:  <b>%d</b>\n", height)
 
 	fmt.Fprintf(&buf, "<pre>")
@@ -468,7 +468,7 @@ func (f *ForkChecker) Start() error {
 			continue
 		}
 
-		if len(notReached) != 0 || len(f.failedConnectionsNodes) != 0 {
+		if len(notReached) >= 5 {
 			f.notifier.AlertOnPoolWaitHeightFailure(f.checkpoint, notReached, reached, f.failedConnectionsNodes, false)
 		}
 
@@ -482,11 +482,29 @@ func (f *ForkChecker) Start() error {
 			continue
 		}
 
-		if !success {
+		if !success && !containsEmptyHashWhenTwoUniques(hashes) {
 			f.notifier.AlertOnInconsistentHashes(f.checkpoint, hashes, true)
 		}
 
 		// Update checkpoint
 		f.checkpoint += f.cfg.HeightCheckInterval
 	}
+}
+
+func containsEmptyHashWhenTwoUniques(hashes map[string]sdk.Hash) bool {
+	uniqueHashes := make(map[sdk.Hash]bool)
+
+	for _, hash := range hashes {
+		uniqueHashes[hash] = true
+	}
+
+	if len(uniqueHashes) == 2 {
+		for hash := range uniqueHashes {
+            if hash.Empty() {
+                return true
+            }
+        }
+	}
+
+	return false
 }
