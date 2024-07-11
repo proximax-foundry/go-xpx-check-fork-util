@@ -159,11 +159,11 @@ func TestCreateHeightAlertStringFromTemplate(t *testing.T) {
 	notConnected := []*health.NodeInfo{
 		{
 			IdentityKey: nil,
-			Endpoint: "127.0.0.1:7900",
+			Endpoint:    "127.0.0.1:7900",
 		},
 		{
 			IdentityKey: nil,
-			Endpoint: "127.0.0.1:7904",
+			Endpoint:    "127.0.0.1:7904",
 		},
 	}
 

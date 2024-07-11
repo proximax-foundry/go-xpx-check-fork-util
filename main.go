@@ -51,20 +51,17 @@ type (
 	}
 
 	ForkChecker struct {
-		cfg                    Config
-		notifier               *Notifier
-		catapultClient         *sdk.Client
-		nodeInfos              []*health.NodeInfo
-		nodePool               *health.NodeHealthCheckerPool
-		failedConnectionsNodes []*health.NodeInfo
-		lastPeerDiscoveryTime  time.Time
-		lastNodeConnectionTime time.Time
-		checkpoint             uint64
+		cfg            Config
+		notifier       *Notifier
+		catapultClient *sdk.Client
+		nodeInfos      []*health.NodeInfo
+		nodePool       *health.NodeHealthCheckerPool
+		checkpoint     uint64
 	}
 )
 
 var (
-	ErrEmptyNodes  = errors.New("Nodes cannot be empty")
+	ErrEmptyNodes  = errors.New("nodes cannot be empty")
 	ErrEmptyApiUrl = errors.New("API url cannot be empty")
 	ErrEmptyBotKey = errors.New("BotAPIKey cannot be empty")
 	ErrEmptyChatId = errors.New("ChatID cannot be empty")
@@ -229,28 +226,18 @@ func AbbreviateIfDNSName(address string) string {
 
 func HeightAlertMsg(height uint64, notReached map[string]uint64, reached map[string]uint64, notConnected []*health.NodeInfo) string {
 	var buf bytes.Buffer
-	totalNodes := len(reached) + len(notReached) + len(notConnected)
 
-	fmt.Fprintf(&buf, "<b>⚠️ Fork Alert </b>\n\n")
-	fmt.Fprintf(&buf, "Expected network height:  <b>%d</b>\n", height)
-	fmt.Fprintf(&buf, "Total nodes:  <b>%d</b>", totalNodes)
-
-	if len(notReached) != 0 {
-		sortedNotReached := SortMapKeys(notReached)
-
-		fmt.Fprintf(&buf, "\n\nOut-of-sync  (%d):", len(notReached))
-		fmt.Fprintf(&buf, "<pre>")
-		for _, node := range sortedNotReached {
-			abbreviatedNode := AbbreviateIfDNSName(node)
-			buf.WriteString(fmt.Sprintf("%-22s %-7d\n", abbreviatedNode, notReached[node]))
-		}
-		fmt.Fprintf(&buf, "</pre>")
+	if len(reached) == 0 {
+		fmt.Fprintf(&buf, "<b>❗ Stuck Alert </b>\n\n")
+	} else {
+		fmt.Fprintf(&buf, "<b>⚠️ Warning </b>\n\n")
 	}
+	fmt.Fprintf(&buf, "Expected network height:  <b>%d</b>\n", height)
 
+	fmt.Fprintf(&buf, "\n\nSynced  (%d):", len(reached))
 	if len(reached) != 0 {
 		sortedReached := SortMapKeys(reached)
 
-		fmt.Fprintf(&buf, "\n\nSynced  (%d):", len(reached))
 		fmt.Fprintf(&buf, "<pre>")
 		for _, node := range sortedReached {
 			abbreviatedNode := AbbreviateIfDNSName(node)
@@ -259,8 +246,20 @@ func HeightAlertMsg(height uint64, notReached map[string]uint64, reached map[str
 		fmt.Fprintf(&buf, "</pre>")
 	}
 
+	fmt.Fprintf(&buf, "\n\nOut-of-sync  (%d):", len(notReached))
+	if len(notReached) != 0 {
+		sortedNotReached := SortMapKeys(notReached)
+
+		fmt.Fprintf(&buf, "<pre>")
+		for _, node := range sortedNotReached {
+			abbreviatedNode := AbbreviateIfDNSName(node)
+			buf.WriteString(fmt.Sprintf("%-22s %-7d\n", abbreviatedNode, notReached[node]))
+		}
+		fmt.Fprintf(&buf, "</pre>")
+	}
+
+	fmt.Fprintf(&buf, "\n\nFailed connections  (%d):", len(notConnected))
 	if len(notConnected) != 0 {
-		fmt.Fprintf(&buf, "\n\nFailed connections  (%d):", len(notConnected))
 		fmt.Fprintf(&buf, "<pre>")
 		for _, node := range notConnected {
 			endpoint := AbbreviateIfDNSName(node.Endpoint)
@@ -377,23 +376,14 @@ func (f *ForkChecker) initPool() error {
 		math.MaxInt,
 	)
 
-	failedConnectionsNodes, err := healthCheckerPool.ConnectToNodes(nodeInfos, f.cfg.Discover)
-	if err != nil {
-		return err
-	}
-
-	f.lastPeerDiscoveryTime = time.Now()
-	f.lastNodeConnectionTime = f.lastPeerDiscoveryTime
 	f.nodeInfos = nodeInfos
 	f.nodePool = healthCheckerPool
-	f.failedConnectionsNodes = failedConnectionsNodes
 	return nil
 }
 
 func (f *ForkChecker) initCheckpoint() error {
-	if f.cfg.Checkpoint != 0 {
-		f.checkpoint = f.cfg.Checkpoint
-	} else {
+	f.checkpoint = f.cfg.Checkpoint
+	if f.checkpoint == 0 {
 		height, err := f.catapultClient.Blockchain.GetBlockchainHeight(context.Background())
 		if err != nil {
 			return fmt.Errorf("error getting blockchain height: %v", err)
@@ -407,82 +397,35 @@ func (f *ForkChecker) initCheckpoint() error {
 	return nil
 }
 
-func (f *ForkChecker) discoverPeers() (err error) {
-	if time.Since(f.lastPeerDiscoveryTime) >= PeersDiscoveryInterval {
-		log.Printf("Discover peers in the network.")
-		f.failedConnectionsNodes, err = f.nodePool.ConnectToNodes(f.nodeInfos, f.cfg.Discover)
-		f.lastPeerDiscoveryTime = time.Now()
-		f.lastNodeConnectionTime = f.lastPeerDiscoveryTime
-		return err
-	}
-
-	return nil
-}
-
-func (f *ForkChecker) connectToMustConnectNodes() (err error) {
-	if time.Since(f.lastNodeConnectionTime) >= TenMinuteInterval {
-		log.Printf("Connect to must-connect nodes.")
-		f.failedConnectionsNodes, err = f.nodePool.ConnectToNodes(f.nodeInfos, false)
-		f.lastNodeConnectionTime = time.Now()
-		log.Println("Failed connections nodes:", f.failedConnectionsNodes)
-		return err
-	}
-
-	return nil
-}
-
-func (f *ForkChecker) ResetPeersDiscoveryTime() {
-	f.lastPeerDiscoveryTime = time.Time{}
-	time.Sleep(TenMinuteInterval / 2)
-}
-
 func (f *ForkChecker) Start() error {
-	var err error
-
 	for {
-		// Periodically discovers new peers in the network
-		err = f.discoverPeers()
-		if err != nil {
-			return fmt.Errorf("error connecting to nodes: %w", err)
-		}
-
 		// Connect to must-connect nodes
-		err = f.connectToMustConnectNodes()
+		log.Println("Connecting to nodes...")
+		failedConnectionsNodes, err := f.nodePool.ConnectToNodes(f.nodeInfos, true)
 		if err != nil {
-			return fmt.Errorf("error connecting to nodes: %w", err)
+			fmt.Println("error connecting to nodes: ", err)
+			log.Println("Failed connections nodes:", failedConnectionsNodes)
+			continue
 		}
 
 		// Wait for nodes to reach checkpoint height
-		log.Println("Checkpoint: ", f.checkpoint)
 		notReached, reached, err := f.nodePool.WaitHeight(f.checkpoint)
 		if err != nil {
-			log.Printf("Error waiting for nodes to reach height %d: %s", f.checkpoint, err)
-			f.ResetPeersDiscoveryTime()
+			log.Printf("Error waiting for connected nodes to reach height %d: %s", f.checkpoint, err)
 			continue
 		}
 
-		if len(reached) == 0 {
-			log.Println("Blockchain stuck at height: ", f.checkpoint)
-			f.notifier.AlertOnPoolWaitHeightFailure(f.checkpoint, notReached, reached, f.failedConnectionsNodes, false)
-			f.ResetPeersDiscoveryTime()
-			continue
-		}
-
-		if len(notReached) != 0 || len(f.failedConnectionsNodes) != 0 {
-			f.notifier.AlertOnPoolWaitHeightFailure(f.checkpoint, notReached, reached, f.failedConnectionsNodes, false)
+		if len(reached) == 0 || len(notReached) != 0 || len(failedConnectionsNodes) != 0 {
+			f.notifier.AlertOnPoolWaitHeightFailure(f.checkpoint, notReached, reached, failedConnectionsNodes, false)
 		}
 
 		// Check the block hash of last confirmed block
 		log.Printf("Checking block hash at %d height", f.checkpoint)
 
-		success, hashes, err := f.nodePool.CheckHashes(f.checkpoint)
+		hashes, err := f.nodePool.CompareHashes(f.checkpoint)
 		if err != nil {
 			log.Printf("Error checking hashes at height %d: %s", f.checkpoint, err)
-			f.ResetPeersDiscoveryTime()
-			continue
-		}
 
-		if !success {
 			f.notifier.AlertOnInconsistentHashes(f.checkpoint, hashes, true)
 		}
 
