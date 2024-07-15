@@ -4,7 +4,7 @@ go 1.20
 
 require (
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
-	github.com/proximax-storage/go-xpx-chain-sdk v0.7.5-0.20240711141134-d049444ecdc7
+	github.com/proximax-storage/go-xpx-chain-sdk v0.7.5-0.20240715151804-d83017c74fcb
 	github.com/proximax-storage/go-xpx-crypto v0.1.0
 	github.com/stretchr/testify v1.8.1
 )

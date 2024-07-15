@@ -25,8 +25,9 @@ import (
 
 type (
 	Nodes []struct {
-		Endpoint    string `json:"endpoint"`
-		IdentityKey string `json:"IdentityKey"`
+		Endpoint     string `json:"endpoint"`
+		IdentityKey  string `json:"IdentityKey"`
+		FriendlyName string `json:"friendlyName"`
 	}
 
 	Config struct {
@@ -136,7 +137,7 @@ func ParseNodes(nodes Nodes) ([]*health.NodeInfo, error) {
 	nodeInfos := make([]*health.NodeInfo, 0, len(nodes))
 
 	for _, node := range nodes {
-		ni, err := health.NewNodeInfo(node.IdentityKey, node.Endpoint)
+		ni, err := health.NewNodeInfo(node.IdentityKey, node.Endpoint, node.FriendlyName)
 		if err != nil {
 			return nil, err
 		}
@@ -170,7 +171,7 @@ func (n *Notifier) SendAlert(text string, alarmTime *time.Time) error {
 	return nil
 }
 
-func (n *Notifier) AlertOnPoolWaitHeightFailure(height uint64, notReached map[string]uint64, reached map[string]uint64, notConnected []*health.NodeInfo, immediate bool) {
+func (n *Notifier) AlertOnPoolWaitHeightFailure(height uint64, notReached map[health.NodeInfo]uint64, reached map[health.NodeInfo]uint64, notConnected map[string]*health.NodeInfo, immediate bool) {
 	if immediate || n.canAlert(n.lastSyncAlertTime) {
 		msg := HeightAlertMsg(height, notReached, reached, notConnected)
 		if err := n.SendAlert(msg, &n.lastSyncAlertTime); err != nil {
@@ -190,10 +191,10 @@ func (n *Notifier) AlertOnInconsistentHashes(height uint64, hashes map[string]sd
 	}
 }
 
-func SortMapKeys(m map[string]uint64) []string {
+func SortMapKeys(m map[health.NodeInfo]uint64) []string {
 	var keys []string
 	for k := range m {
-		keys = append(keys, k)
+		keys = append(keys, k.Endpoint)
 	}
 	sort.Strings(keys)
 	return keys
@@ -224,7 +225,7 @@ func AbbreviateIfDNSName(address string) string {
 	return address
 }
 
-func HeightAlertMsg(height uint64, notReached map[string]uint64, reached map[string]uint64, notConnected []*health.NodeInfo) string {
+func HeightAlertMsg(height uint64, notReached map[health.NodeInfo]uint64, reached map[health.NodeInfo]uint64, notConnected map[string]*health.NodeInfo) string {
 	var buf bytes.Buffer
 
 	if len(reached) == 0 {
@@ -236,24 +237,24 @@ func HeightAlertMsg(height uint64, notReached map[string]uint64, reached map[str
 
 	fmt.Fprintf(&buf, "\n\nSynced  (%d):", len(reached))
 	if len(reached) != 0 {
-		sortedReached := SortMapKeys(reached)
+		//sortedReached := SortMapKeys(reached)
 
 		fmt.Fprintf(&buf, "<pre>")
-		for _, node := range sortedReached {
-			abbreviatedNode := AbbreviateIfDNSName(node)
-			buf.WriteString(fmt.Sprintf("%-24s %-7d\n", abbreviatedNode, reached[node]))
+		for node, h := range reached {
+			abbreviatedNode := AbbreviateIfDNSName(node.Endpoint)
+			buf.WriteString(fmt.Sprintf("%s(%s) %-7d\n", node.FriendlyName, abbreviatedNode, h))
 		}
 		fmt.Fprintf(&buf, "</pre>")
 	}
 
 	fmt.Fprintf(&buf, "\n\nOut-of-sync  (%d):", len(notReached))
 	if len(notReached) != 0 {
-		sortedNotReached := SortMapKeys(notReached)
+		//sortedNotReached := SortMapKeys(notReached)
 
 		fmt.Fprintf(&buf, "<pre>")
-		for _, node := range sortedNotReached {
-			abbreviatedNode := AbbreviateIfDNSName(node)
-			buf.WriteString(fmt.Sprintf("%-22s %-7d\n", abbreviatedNode, notReached[node]))
+		for node, h := range notReached {
+			abbreviatedNode := AbbreviateIfDNSName(node.Endpoint)
+			buf.WriteString(fmt.Sprintf("%s(%s) %-7d\n", node.FriendlyName, abbreviatedNode, h))
 		}
 		fmt.Fprintf(&buf, "</pre>")
 	}
@@ -263,7 +264,7 @@ func HeightAlertMsg(height uint64, notReached map[string]uint64, reached map[str
 		fmt.Fprintf(&buf, "<pre>")
 		for _, node := range notConnected {
 			endpoint := AbbreviateIfDNSName(node.Endpoint)
-			fmt.Fprintf(&buf, "%-24s\n", strings.TrimSpace(endpoint))
+			fmt.Fprintf(&buf, "%s(%s)\n", node.FriendlyName, strings.TrimSpace(endpoint))
 		}
 		fmt.Fprintf(&buf, "</pre>")
 	}
