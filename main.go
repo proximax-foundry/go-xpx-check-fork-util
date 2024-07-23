@@ -235,22 +235,20 @@ func HeightAlertMsg(height uint64, notReached map[health.NodeInfo]uint64, reache
 	}
 	fmt.Fprintf(&buf, "Expected network height:  <b>%d</b>\n", height)
 
-	fmt.Fprintf(&buf, "\n\nSynced  (%d):", len(reached))
+	fmt.Fprintf(&buf, "\n\nSynced at %d (%d):", height, len(reached))
 	if len(reached) != 0 {
 		//sortedReached := SortMapKeys(reached)
 
 		fmt.Fprintf(&buf, "<pre>")
-		for node, h := range reached {
+		for node, _ := range reached {
 			abbreviatedNode := AbbreviateIfDNSName(node.Endpoint)
-			buf.WriteString(fmt.Sprintf("%s(%s) %-7d\n", node.FriendlyName, abbreviatedNode, h))
+			buf.WriteString(fmt.Sprintf("%s(%s)\n", node.FriendlyName, abbreviatedNode))
 		}
 		fmt.Fprintf(&buf, "</pre>")
 	}
 
 	fmt.Fprintf(&buf, "\n\nOut-of-sync  (%d):", len(notReached))
 	if len(notReached) != 0 {
-		//sortedNotReached := SortMapKeys(notReached)
-
 		fmt.Fprintf(&buf, "<pre>")
 		for node, h := range notReached {
 			abbreviatedNode := AbbreviateIfDNSName(node.Endpoint)
@@ -259,7 +257,7 @@ func HeightAlertMsg(height uint64, notReached map[health.NodeInfo]uint64, reache
 		fmt.Fprintf(&buf, "</pre>")
 	}
 
-	fmt.Fprintf(&buf, "\n\nFailed connections  (%d):", len(notConnected))
+	fmt.Fprintf(&buf, "\n\nFailed connections (%d):", len(notConnected))
 	if len(notConnected) != 0 {
 		fmt.Fprintf(&buf, "<pre>")
 		for _, node := range notConnected {
