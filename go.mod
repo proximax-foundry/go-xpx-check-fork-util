@@ -2,9 +2,11 @@ module go-xpx-check-fork-util
 
 go 1.20
 
+replace github.com/proximax-storage/go-xpx-chain-sdk v0.7.5-0.20240829110831-7be911d04f0f => /Users/y_neuman/projects/proximax/go-xpx-chain-sdk
+
 require (
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
-	github.com/proximax-storage/go-xpx-chain-sdk v0.7.5-0.20240829110831-7be911d04f0f
+	github.com/proximax-storage/go-xpx-chain-sdk v0.7.5-0.20240830063955-036cc28c4328
 	github.com/proximax-storage/go-xpx-crypto v0.1.0
 	github.com/stretchr/testify v1.8.1
 )
