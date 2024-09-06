@@ -1,73 +1,89 @@
 # go-xpx-check-fork-util
 
-The check fork util script is a tool to detect forked chain by comparing block hashes at a certain height among the provided api nodes, peer nodes, and their connected nodes. The script runs at regular intervals and sends notifications through a Telegram bot when it detects any forks. 
+The check fork utility script is a tool to detect chain forks by comparing block hashes at specific heights across the provided nodes and their connected nodes. The script runs at regular intervals and sends notifications through a Telegram bot if any forks are detected.
 
-Notifications are triggered in the following scenarios:
-- When it identifies an inconsistent block hash on the last confirmed block, indicating a fork has occurred.
-- When it detects nodes that are out of sync, potentially leading to a fork.
+**Notifications will be triggered in the following scenarios:**
+- **Hash Alert**: Triggered when an inconsistent block hash is detected on the last confirmed block, indicating a fork.
+- **Out-of-Sync Alert**: Triggered if more than a specified number of nodes (from those listed in the config file) are out of sync, based on a block count difference threshold
+- **Stuck Alert**: Triggered when no nodes have reached the checkpoint height within a specified duration, indicating that the blockchain is stuck.
+- **Offline Alert**: Triggered when any nodes (from those listed in the config file) are detected as offline.
 
 <br/>
 
 ## Getting started
 ### Prerequisites
-* [Golang](https://golang.org/
-) is required (tested on Go 1.20)
-* [Telegram Bots](https://core.telegram.org/bots
-) API Key and Chat Id 
+* [Golang](https://golang.org/) is required (tested on Go 1.20)
+* [Telegram Bots](https://core.telegram.org/bots) API Key and Chat Id 
 
 <br/>
 
 ## Configurations
 
-Configurations can be made to the script by changing the values to the fields in config.json.
+Configure the script by modifying the values in config.json.
 
 ```json
 {
     "nodes": [
         {
-            "endpoint": "localhost:7900",
-            "IdentityKey": "4F7A80E9D6C2A4F5B46B90A1D16E95D4C1B8A3E8D5D1479D7C802C475D70A2E"
+            "endpoint": "127.0.0.1:7900",
+            "IdentityKey": "4F7A80E9D6C2A4F5B46B90A1D16E95D4C1B8A3E8D5D1479D7C802C475D70A2E",
+            "friendlyName": "nodeA"
         },
         {
-            "endpoint": "localhost:7901",
-            "IdentityKey": "DA6B8ECFEBDDAA49CA26DEB8AC2F6346DBC9C8DD96B4584A01410190DAB4A45A"
+            "endpoint": "127.0.0.2:7900",
+            "IdentityKey": "DA6B8ECFEBDDAA49CA26DEB8AC2F6346DBC9C8DD96B4584A01410190DAB4A45A",
+            "friendlyName": "nodeB"
         }     
     ],
     "apiUrls": [
-        "https://localhost:3000",
-        "https://localhost:3001"
+        "http://127.0.0.1:3000",
+        "http://127.0.0.2:3000"
     ],
     "discover": true,
     "checkpoint": 0,
-    "heightCheckInterval": 5,
-    "alarmInterval": 1,
+    "heightCheckInterval": 1,
     "botApiKey": "<TELEGRAM_BOT_API_KEY>",
-    "chatID": 1234567,
-    "notify": true
+    "chatID": -1234567,
+    "notify": true,
+    "alertConfig": {
+        "offlineAlertRepeatInterval": "2h",
+        "offlineDurationThreshold": "5m",
+        "syncAlertRepeatInterval": "2h",
+        "stuckDurationThreshold": "10m",
+        "outOfSyncBlocksThreshold": 5,
+        "outOfSyncCriticalNodesThreshold": 5
+    }
 }
 ```
 
-* `nodes`: List of nodes (API and PEER) to compare block hashes.
-    * `Endpoint`: Node's host and port.
-    * `IdentityKey` Node's public key.
+* `nodes`: List of nodes (both API and PEER) for comparing block hashes.
+    * `endpoint`: Node's host and port.
+    * `IdentityKey`: Node's public key.
+    * `friendlyName`: Node's friendly name.
 * `apiUrls`: URLs of the REST servers.
 * `discover`: Option to enable or disable peer discovery.
-* `checkpoint`:  Specifies the initial chain height for conducting health checks. When set to 0, the script sets this checkpoint based on the current chain height obtained from the REST server.
+* `checkpoint`:  Specifies the initial chain height for health checks. If set to 0, the script will determine the checkpoint based on the current chain height from the REST server.
 * `heightCheckInterval`: Number of blocks between each block hash check.
-* `alarmInterval`: Time interval (*in hours*) the telegram bot will send notification if a fork is detected.
-* `botApiKey`: Telegram bot's API key.
-* `chatID`: Telegram chat ID where notifications will be received.
-* `notify`: Option to enable or disable telegram notification (`false` by default).
+* `botApiKey`:  API key for the Telegram bot.
+* `chatID`: Telegram chat ID where notifications will be sent.
+* `notify`: Option to enable or disable Telegram notifications.
+* `alertConfig`
+    * `offlineAlertRepeatInterval`: Time between repeated alerts for offline nodes.
+    * `offlineDurationThreshold`: Duration that a node must remain offline before an alert is triggered.
+    * `syncAlertRepeatInterval`: Time between repeated alerts for blockchain sync issues.
+    * `stuckDurationThreshold`: Duration that the blockchain must remain stuck before an alert is triggered.
+    * `outOfSyncBlocksThreshold`: Number of blocks difference that classifies nodes as out-of-sync.
+    * `outOfSyncCriticalNodesThreshold`: Number of nodes (from those listed in the config file) that need to be classified as out of sync before an alert is triggered.
   
 <br/>
 
 ## Usage
 ```bash
-go build -o check-fork-util
+go build -o go-xpx-check-fork-util
 
 # Running with default configuration file: "config.json"
-./check-fork-util
+./go-xpx-check-fork-util
 
 # Running with specific configuration file using the `-file` flag
-./check-fork-util -file "specific-config.json"
+./go-xpx-check-fork-util -file "specific-config.json"
 ```

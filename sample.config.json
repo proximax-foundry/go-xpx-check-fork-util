@@ -1,0 +1,52 @@
+{
+    "nodes": [
+        {
+            "endpoint": "127.0.0.1:7900",
+            "IdentityKey": "AF7A80E9D6C2A4F5B46B90A1D16E95D4C1B8A3E8D5D1479D7C802C475D70A2E",
+            "friendlyName": "nodeA"
+        },
+        {
+            "endpoint": "127.0.0.2:7900",
+            "IdentityKey": "BF7A80E9D6C2A4F5B46B90A1D16E95D4C1B8A3E8D5D1479D7C802C475D70A2E",
+            "friendlyName": "nodeB"
+        },
+        {
+            "endpoint": "127.0.0.3:7900",
+            "IdentityKey": "CF7A80E9D6C2A4F5B46B90A1D16E95D4C1B8A3E8D5D1479D7C802C475D70A2E",
+            "friendlyName": "nodeC"
+        },
+        {
+            "endpoint": "127.0.0.4:7900",
+            "IdentityKey": "DF7A80E9D6C2A4F5B46B90A1D16E95D4C1B8A3E8D5D1479D7C802C475D70A2E",
+            "friendlyName": "nodeD"
+        },
+        {
+            "endpoint": "127.0.0.5:7900",
+            "IdentityKey": "EF7A80E9D6C2A4F5B46B90A1D16E95D4C1B8A3E8D5D1479D7C802C475D70A2E",
+            "friendlyName": "nodeE"
+        },
+        {
+            "endpoint": "127.0.0.6:7900",
+            "IdentityKey": "FF7A80E9D6C2A4F5B46B90A1D16E95D4C1B8A3E8D5D1479D7C802C475D70A2E",
+            "friendlyName": "nodeF"
+        }
+    ],
+    "apiUrls": [
+        "http://127.0.0.1:3000",
+        "http://127.0.0.2:3000"
+    ],
+    "discover": true,
+    "checkpoint": 0,
+    "heightCheckInterval": 1,
+    "botApiKey": "7108251290:AAHYAp0fi7leBHAD9Xtna8ay2Zm48Y5zZh0",
+    "chatID": -1234567,
+    "notify": true,
+    "alertConfig": {
+        "offlineAlertRepeatInterval": "2h",
+        "offlineDurationThreshold": "5m",
+        "syncAlertRepeatInterval": "2h",
+        "stuckDurationThreshold": "10m",
+        "outOfSyncBlocksThreshold": 5,
+        "outOfSyncCriticalNodesThreshold": 5
+    }
+}
