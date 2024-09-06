@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/proximax-storage/go-xpx-chain-sdk/tools/health"
 )
 
 type (
@@ -28,12 +30,12 @@ type (
 	}
 
 	AlertConfig struct {
-		OfflineAlertRepeatInterval        int `json:"offlineAlertRepeatInterval"`
-		OfflineConsecutiveBlocksThreshold int `json:"offlineConsecutiveBlocksThreshold"`
-		SyncAlertRepeatInterval           int `json:"syncAlertRepeatInterval"`
-		StuckDurationThreshold            int `json:"stuckDurationThreshold"`
-		OutOfSyncBlocksThreshold          int `json:"outOfSyncBlocksThreshold"`
-		OutOfSyncCriticalNodesThreshold   int `json:"outOfSyncCriticalNodesThreshold"`
+		OfflineAlertRepeatInterval      string `json:"offlineAlertRepeatInterval"`
+		OfflineDurationThreshold        string `json:"offlineDurationThreshold"`
+		SyncAlertRepeatInterval         string `json:"syncAlertRepeatInterval"`
+		StuckDurationThreshold          string `json:"stuckDurationThreshold"`
+		OutOfSyncBlocksThreshold        int    `json:"outOfSyncBlocksThreshold"`
+		OutOfSyncCriticalNodesThreshold int    `json:"outOfSyncCriticalNodesThreshold"`
 	}
 )
 
@@ -42,6 +44,13 @@ var (
 	ErrEmptyApiUrl = errors.New("API url cannot be empty")
 	ErrEmptyBotKey = errors.New("BotAPIKey cannot be empty")
 	ErrEmptyChatId = errors.New("ChatID cannot be empty")
+)
+
+const (
+	DefaultOfflineAlertRepeatInterval = time.Hour * 12
+	DefaultOfflineDurationThreshold   = time.Minute * 5
+	DefaultSyncAlertRepeatInterval    = time.Hour * 6
+	DefaultStuckDurationThreshold     = time.Minute * 10
 )
 
 func LoadConfig(fileName string) (*Config, error) {
@@ -84,13 +93,41 @@ func (c *Config) Validate() error {
 }
 
 func (a *AlertConfig) getOfflineAlertRepeatInterval() time.Duration {
-	return time.Duration(a.OfflineAlertRepeatInterval) * time.Minute
+	duration, err := time.ParseDuration(a.OfflineAlertRepeatInterval)
+	if err != nil {
+		fmt.Println("Error parsing offline alert repeat interval:", err)
+		return DefaultOfflineAlertRepeatInterval
+	}
+	return duration
 }
 
 func (a *AlertConfig) getSyncAlertRepeatInterval() time.Duration {
-	return time.Duration(a.SyncAlertRepeatInterval) * time.Minute
+	duration, err := time.ParseDuration(a.SyncAlertRepeatInterval)
+	if err != nil {
+		fmt.Println("Error parsing sync alert repeat interval:", err)
+		return DefaultSyncAlertRepeatInterval
+	}
+	return duration
 }
 
 func (a *AlertConfig) getStuckDurationThreshold() time.Duration {
-	return time.Duration(a.StuckDurationThreshold) * time.Minute
+	duration, err := time.ParseDuration(a.StuckDurationThreshold)
+	if err != nil {
+		fmt.Println("Error parsing stuck duration threshold:", err)
+		return DefaultStuckDurationThreshold
+	}
+	return duration
+}
+
+func (a *AlertConfig) getOfflineDurationThreshold() time.Duration {
+	duration, err := time.ParseDuration(a.OfflineDurationThreshold)
+	if err != nil {
+		fmt.Println("Error parsing offline duration threshold:", err)
+		return DefaultOfflineDurationThreshold
+	}
+	return duration
+}
+
+func (a *AlertConfig) getOfflineBlocksThreshold() int {
+	return int(a.getOfflineDurationThreshold() / health.DefaultAvgSecondsPerBlock)
 }

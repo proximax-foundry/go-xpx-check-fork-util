@@ -46,10 +46,10 @@ Configure the script by modifying the values in config.json.
     "chatID": -1234567,
     "notify": true,
     "alertConfig": {
-        "offlineAlertRepeatInterval": 120,
-        "offlineConsecutiveBlocksThreshold": 20,
-        "syncAlertRepeatInterval": 120,
-        "stuckDurationThreshold": 10,
+        "offlineAlertRepeatInterval": "2h",
+        "offlineDurationThreshold": "5m",
+        "syncAlertRepeatInterval": "2h",
+        "stuckDurationThreshold": "10m",
         "outOfSyncBlocksThreshold": 5,
         "outOfSyncCriticalNodesThreshold": 5
     }
@@ -69,7 +69,7 @@ Configure the script by modifying the values in config.json.
 * `notify`: Option to enable or disable Telegram notifications.
 * `alertConfig`
     * `offlineAlertRepeatInterval`: Time between repeated alerts for offline nodes.
-    * `offlineConsecutiveBlocksThreshold`: Number of consecutive blocks that nodes must be offline before an alert is triggered.
+    * `offlineDurationThreshold`: Duration that a node must remain offline before an alert is triggered.
     * `syncAlertRepeatInterval`: Time between repeated alerts for blockchain sync issues.
     * `stuckDurationThreshold`: Duration that the blockchain must remain stuck before an alert is triggered.
     * `outOfSyncBlocksThreshold`: Number of blocks difference that classifies nodes as out-of-sync.

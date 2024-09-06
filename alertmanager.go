@@ -202,7 +202,7 @@ func (a HashAlert) createMessage() string {
 	var buf bytes.Buffer
 
 	fmt.Fprintf(&buf, "<b>❗Fork Alert </b>\n\n")
-	fmt.Fprintf(&buf, "Inconsistent block hash at:  <b>%d</b>\n", a.Height)
+	fmt.Fprintf(&buf, "Inconsistent block hash:  <b>%d</b>\n", a.Height)
 
 	fmt.Fprintf(&buf, "<pre>")
 	for hash, endpoints := range hashesGroup {
@@ -263,7 +263,7 @@ func (am *AlertManager) sendToTelegram(alert Alert) {
 }
 
 func (am *AlertManager) handleSyncAlert(checkpoint uint64, notReached, reached map[health.NodeInfo]uint64) {
-	if am.shouldSendSyncAlert(checkpoint, notReached, reached) && time.Since(am.lastAlertTimes[SyncAlertType]) > am.config.getSyncAlertRepeatInterval(){
+	if am.shouldSendSyncAlert(checkpoint, notReached, reached) && time.Since(am.lastAlertTimes[SyncAlertType]) > am.config.getSyncAlertRepeatInterval() {
 		am.sendToTelegram(SyncAlert{
 			Height:     checkpoint,
 			NotReached: notReached,
@@ -309,7 +309,7 @@ func (am *AlertManager) isStuckDurationReached(checkpoint uint64) bool {
 }
 
 func (am *AlertManager) handleOfflineAlert(failedConnectionsNodes map[string]*health.NodeInfo) {
-	if am.shouldSendOfflineAlert(failedConnectionsNodes){
+	if am.shouldSendOfflineAlert(failedConnectionsNodes) {
 		am.sendToTelegram(OfflineAlert{
 			NotConnected: failedConnectionsNodes,
 		})
@@ -318,7 +318,7 @@ func (am *AlertManager) handleOfflineAlert(failedConnectionsNodes map[string]*he
 
 func (am *AlertManager) shouldSendOfflineAlert(failedConnectionsNodes map[string]*health.NodeInfo) bool {
 	shouldAlert := false
-	
+
 	for _, info := range am.nodeInfos {
 		identityKey := info.IdentityKey.String()
 		if _, exists := failedConnectionsNodes[identityKey]; exists {
@@ -332,7 +332,7 @@ func (am *AlertManager) shouldSendOfflineAlert(failedConnectionsNodes map[string
 
 			am.updateNodeStatus(identityKey, status)
 
-			if status.consecutiveOfflineCount > am.config.OfflineConsecutiveBlocksThreshold && time.Since(status.lastOfflineAlertTime) > am.config.getOfflineAlertRepeatInterval() {
+			if status.consecutiveOfflineCount > am.config.getOfflineBlocksThreshold() && time.Since(status.lastOfflineAlertTime) > am.config.getOfflineAlertRepeatInterval() {
 				shouldAlert = true
 			}
 		} else {

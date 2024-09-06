@@ -42,10 +42,10 @@
     "chatID": -1234567,
     "notify": true,
     "alertConfig": {
-        "offlineAlertRepeatInterval": 120,
-        "offlineConsecutiveBlocksThreshold": 20,
-        "syncAlertRepeatInterval": 120,
-        "stuckDurationThreshold": 10,
+        "offlineAlertRepeatInterval": "2h",
+        "offlineDurationThreshold": "5m",
+        "syncAlertRepeatInterval": "2h",
+        "stuckDurationThreshold": "10m",
         "outOfSyncBlocksThreshold": 5,
         "outOfSyncCriticalNodesThreshold": 5
     }

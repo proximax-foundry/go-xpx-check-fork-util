@@ -55,7 +55,7 @@ func TestShouldSendOfflineAlert(t *testing.T) {
 		}
 
 		// Check that alert should be sent after exceeding the threshold
-		blocksCount := fc.cfg.AlertConfig.OfflineConsecutiveBlocksThreshold
+		blocksCount := fc.cfg.AlertConfig.getOfflineBlocksThreshold()
 		shouldAlert := false
 		for i := 0; i < blocksCount+1; i++ {
 			shouldAlert = fc.alertManager.shouldSendOfflineAlert(failedConnectionsNodes)
@@ -81,14 +81,14 @@ func TestShouldSendOfflineAlert(t *testing.T) {
 
 func TestShouldSendSyncAlert(t *testing.T) {
 
-	t.Run("Exceed stuck duration threshold", func(t *testing.T) {
+	t.Run("Not exceed stuck duration threshold", func(t *testing.T) {
 		config, err := LoadConfig("sample.config.json")
 		require.NoError(t, err)
-	
+
 		fc := &ForkChecker{cfg: *config}
 		err = fc.initAlertManager()
 		require.NoError(t, err)
-	
+
 		checkpoint := uint64(1000)
 
 		notReached := map[health.NodeInfo]uint64{
@@ -99,21 +99,21 @@ func TestShouldSendSyncAlert(t *testing.T) {
 			*fc.alertManager.nodeInfos[4]: 954,
 			*fc.alertManager.nodeInfos[5]: 955,
 		}
-	
+
 		reached := map[health.NodeInfo]uint64{}
 
 		shouldAlert := fc.alertManager.shouldSendSyncAlert(checkpoint, notReached, reached)
 		assert.Equal(t, false, shouldAlert)
 	})
 
-	t.Run("Not exceed stuck duration threshold", func(t *testing.T) {
+	t.Run("Exceed stuck duration threshold", func(t *testing.T) {
 		config, err := LoadConfig("sample.config.json")
 		require.NoError(t, err)
-	
+
 		fc := &ForkChecker{cfg: *config}
 		err = fc.initAlertManager()
 		require.NoError(t, err)
-	
+
 		checkpoint := uint64(1000)
 
 		notReached := map[health.NodeInfo]uint64{
@@ -124,12 +124,12 @@ func TestShouldSendSyncAlert(t *testing.T) {
 			*fc.alertManager.nodeInfos[4]: 954,
 			*fc.alertManager.nodeInfos[5]: 955,
 		}
-	
+
 		reached := map[health.NodeInfo]uint64{}
-	
+
 		fc.alertManager.lastStuckHeight = checkpoint
-		fc.alertManager.lastStuckTime = time.Now().Add(-fc.alertManager.config.getStuckDurationThreshold()*2)
-		
+		fc.alertManager.lastStuckTime = time.Now().Add(-fc.alertManager.config.getStuckDurationThreshold() * 2)
+
 		shouldAlert := fc.alertManager.shouldSendSyncAlert(checkpoint, notReached, reached)
 		assert.Equal(t, true, shouldAlert)
 	})
@@ -137,11 +137,11 @@ func TestShouldSendSyncAlert(t *testing.T) {
 	t.Run("Exceed critical nodes threshold", func(t *testing.T) {
 		config, err := LoadConfig("sample.config.json")
 		require.NoError(t, err)
-	
+
 		fc := &ForkChecker{cfg: *config}
 		err = fc.initAlertManager()
 		require.NoError(t, err)
-	
+
 		checkpoint := uint64(1000)
 
 		notReached := map[health.NodeInfo]uint64{
@@ -151,11 +151,11 @@ func TestShouldSendSyncAlert(t *testing.T) {
 			*fc.alertManager.nodeInfos[3]: 953,
 			*fc.alertManager.nodeInfos[4]: 954,
 		}
-	
+
 		reached := map[health.NodeInfo]uint64{
 			*fc.alertManager.nodeInfos[5]: 1000,
 		}
-	
+
 		shouldAlert := fc.alertManager.shouldSendSyncAlert(checkpoint, notReached, reached)
 		assert.Equal(t, true, shouldAlert)
 	})
@@ -163,11 +163,11 @@ func TestShouldSendSyncAlert(t *testing.T) {
 	t.Run("Not exceed critical nodes threshold", func(t *testing.T) {
 		config, err := LoadConfig("sample.config.json")
 		require.NoError(t, err)
-	
+
 		fc := &ForkChecker{cfg: *config}
 		err = fc.initAlertManager()
 		require.NoError(t, err)
-	
+
 		checkpoint := uint64(1000)
 
 		notReached := map[health.NodeInfo]uint64{
@@ -176,12 +176,12 @@ func TestShouldSendSyncAlert(t *testing.T) {
 			*fc.alertManager.nodeInfos[2]: 952,
 			*fc.alertManager.nodeInfos[3]: 953,
 		}
-	
+
 		reached := map[health.NodeInfo]uint64{
 			*fc.alertManager.nodeInfos[4]: 1000,
 			*fc.alertManager.nodeInfos[5]: 1000,
 		}
-	
+
 		shouldAlert := fc.alertManager.shouldSendSyncAlert(checkpoint, notReached, reached)
 		assert.Equal(t, false, shouldAlert)
 	})
@@ -189,11 +189,11 @@ func TestShouldSendSyncAlert(t *testing.T) {
 	t.Run("Not exceed blocks threshold", func(t *testing.T) {
 		config, err := LoadConfig("sample.config.json")
 		require.NoError(t, err)
-	
+
 		fc := &ForkChecker{cfg: *config}
 		err = fc.initAlertManager()
 		require.NoError(t, err)
-	
+
 		checkpoint := uint64(1000)
 
 		notReached := map[health.NodeInfo]uint64{
@@ -203,14 +203,29 @@ func TestShouldSendSyncAlert(t *testing.T) {
 			*fc.alertManager.nodeInfos[3]: 999,
 			*fc.alertManager.nodeInfos[4]: 999,
 		}
-	
+
 		reached := map[health.NodeInfo]uint64{
 			*fc.alertManager.nodeInfos[5]: 1000,
 		}
-	
+
 		shouldAlert := fc.alertManager.shouldSendSyncAlert(checkpoint, notReached, reached)
 		assert.Equal(t, false, shouldAlert)
 	})
+}
+
+func TestGetBlocksCountFromDuration(t *testing.T) {
+	config, err := LoadConfig("sample.config.json")
+	require.NoError(t, err)
+
+	fc := &ForkChecker{cfg: *config}
+	err = fc.initAlertManager()
+	require.NoError(t, err)
+
+	fc.alertManager.config.OfflineDurationThreshold = "5m"
+	assert.Equal(t, 20, fc.alertManager.config.getOfflineBlocksThreshold())
+
+	fc.alertManager.config.OfflineDurationThreshold = "10m"
+	assert.Equal(t, 40, fc.alertManager.config.getOfflineBlocksThreshold())
 }
 
 func getPublicKey(key string) *crypto.PublicKey {
